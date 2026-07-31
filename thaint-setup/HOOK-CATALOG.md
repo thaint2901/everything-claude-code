@@ -22,9 +22,9 @@ One `hooks.json` entry (`pre-bash-dispatcher`) runs all six in-process.
 | --- | --- | --- |
 | `pre:bash:block-no-verify` | block-no-verify | Blocks `--no-verify` and `-c core.hooksPath=` so agents cannot skip pre-commit, commit-msg, or pre-push hooks |
 | `pre:bash:auto-tmux-dev` | auto-tmux-dev | Runs dev servers in a named tmux session (new cmd window on Windows) instead of blocking the tool call |
-| `pre:bash:tmux-reminder` | pre-bash-tmux-reminder | Reminds to run long-lived commands under tmux — `inferred`, no docblock |
-| `pre:bash:git-push-reminder` | pre-bash-git-push-reminder | Warns before `git push` — `inferred`, no docblock |
-| `pre:bash:commit-quality` | pre-bash-commit-quality | Detects staged files and runs the linter on them before a commit command |
+| `pre:bash:tmux-reminder` | pre-bash-tmux-reminder | Suggests tmux, with the command unchanged. Fires only off Windows, only when `TMUX` is unset, and only for `npm/pnpm/yarn/bun install\|test`, `cargo build`, `make`, `docker`, `pytest`, `vitest`, `playwright`. No docblock; conditions read from source |
+| `pre:bash:git-push-reminder` | pre-bash-git-push-reminder | Prints "Review changes before push" then "Continuing with push" on every `git push`. Blocks nothing, shows no diff, checks no remote or branch; its own second line says to remove the hook for real review. Unfinished stub — **disabled locally**, see below |
+| `pre:bash:commit-quality` | pre-bash-commit-quality | Reads staged content (`git show :file`, not the working tree) and blocks the commit with exit 2 on leaked API keys (`sk-ant-`, `sk-`, `ghp_`, `AKIA`, `api_key = "…"`) or a `debugger` statement. Warns without blocking on `console.log`, unreferenced TODO/FIXME, and commit-message format. Also runs ESLint/Pylint/golint on staged files, 30 s each — a lint failure blocks. Skips `--amend` |
 | `pre:bash:gateguard-fact-force` | gateguard-fact-force | Denies the first Bash call and demands facts (request restated, what the command produces) before allowing the retry |
 
 ## PreToolUse · separate entries
@@ -77,7 +77,7 @@ Reached via `post:bash:dispatcher` → `post-bash-dispatcher`.
 | `pre:compact` | PreCompact | pre-compact | Generates an LLM summary of the session and writes it to the active session file before compaction |
 | — | SessionStart | session-start | Loads the most recent session summary into context via stdout (invoked through `session-start-bootstrap`) |
 | `session-start:plan-canvas-sessions` | SessionStart | plan-canvas-sessions | Surfaces a Plan Canvas review left open by a previous session |
-| `stop:format-typecheck` | Stop | stop-format-typecheck | Reads the accumulator and formats plus typechecks every file edited this response in one pass. **Timeout 300s** — the longest blocking hook in the graph |
+| `stop:format-typecheck` | Stop | stop-format-typecheck | Reads the accumulator written by `post:edit:accumulator`, then runs the formatter once per project root and `tsc --noEmit` once per tsconfig dir, filtering output to the edited files (10 lines each). Clears the accumulator so repeated Stops do not re-process. **Do not lower the 300 s timeout:** the hook budgets 270 s internally and divides it evenly across batches, so a lower ceiling shrinks every per-batch timeout and makes typechecks expire silently — it fails open |
 | `stop:check-console-log` | Stop | check-console-log | Warns if modified JS/TS files contain `console.log` — overlaps `post:edit:console-warn` |
 | `stop:session-end` (async) | Stop | session-end | Extracts a summary from the transcript and persists learnings during an active session |
 | `stop:evaluate-session` (async) | Stop | evaluate-session | Extracts reusable patterns from the transcript for continuous learning |
@@ -116,6 +116,12 @@ script is not registered anywhere, so JS/TS formatting happens only later, at
 Every unregistered script above still has a passing test, which is why none of
 this surfaced: the tests prove the module works, not that it is wired.
 
+`pre-bash-commit-quality` prints `git commit --no-verify` as the way to bypass
+its own checks. That advice is wrong twice: `--no-verify` skips git's hooks, not
+Claude Code's, so this hook still runs — and `pre:bash:block-no-verify`, in the
+same dispatcher, rejects the flag outright. The working bypass is
+`ECC_DISABLED_HOOKS=pre:bash:commit-quality`.
+
 ## Turning hooks off
 
 `hooks/README.md` is the reference for `ECC_HOOK_PROFILE`,
@@ -125,6 +131,17 @@ this surfaced: the tests prove the module works, not that it is wired.
   `minimal` runs none of them — including GateGuard.
 - `GATEGUARD_BASH_ROUTINE_DISABLED=1` drops only the once-per-session routine
   Bash gate and keeps the destructive-command gate.
+
+### Disabled in this setup
+
+Both set in `~/.claude/settings.json` under `env`:
+
+| Setting | Effect | Reason |
+| --- | --- | --- |
+| `ECC_DISABLED_HOOKS=…,pre:bash:git-push-reminder` | Drops the push reminder | Unfinished stub; fires on every push and changes nothing |
+| `GATEGUARD_BASH_ROUTINE_DISABLED=1` | Drops the routine Bash gate, keeps the destructive gate | The routine gate costs a model round trip per firing to restate the request. "Once per session" is really once per 30-minute idle window — GateGuard's state expires on `SESSION_TIMEOUT_MS`, so it re-fires in long sessions. The destructive gate is where the value is: a rollback line before `rm -rf` or `git push --force` |
+
+`stop:desktop-notify` was already disabled before this.
 
 ## Regenerating
 
