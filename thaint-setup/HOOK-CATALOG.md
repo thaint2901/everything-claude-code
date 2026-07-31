@@ -139,9 +139,13 @@ Both set in `~/.claude/settings.json` under `env`:
 | Setting | Effect | Reason |
 | --- | --- | --- |
 | `ECC_DISABLED_HOOKS=…,pre:bash:git-push-reminder` | Drops the push reminder | Unfinished stub; fires on every push and changes nothing |
+| `ECC_DISABLED_HOOKS=…,pre:observe,post:observe:continuous-learning` | Drops both observe registrations | Empty shell here: the runner only delegates to `skills/continuous-learning-v2/hooks/observe.sh`, which is not installed under `~/.claude` — every tool call spawned a process that exited with "script not found". Re-enabling requires installing that skill first, not just removing the id |
+| `ECC_DISABLED_HOOKS=…,pre:governance-capture,post:governance-capture` | Drops both governance registrations | Off by default anyway (`governance-capture.js:255` requires `ECC_GOVERNANCE_CAPTURE=1`, unset here), so both entries spawned a process per Bash/Write/Edit only to exit. What it would log overlaps hooks that already *block*: secrets → `pre:bash:commit-quality`, destructive commands → GateGuard. To use it for real, set `ECC_GOVERNANCE_CAPTURE=1` and remove the ids |
+| `mcp-health-check` PreToolUse matcher `*` → `mcp__.*` | Probes only before MCP tool calls, per its own docblock | Matcher semantics (Claude Code docs): only regex when the value has a char outside `[letters digits _ - space , \|]`. Plain `mcp__` would be exact-matched and match **no** tool — the `.*` is load-bearing. The `PostToolUseFailure` registration is untouched |
 | `GATEGUARD_BASH_ROUTINE_DISABLED=1` | Drops the routine Bash gate, keeps the destructive gate | The routine gate costs a model round trip per firing to restate the request. "Once per session" is really once per 30-minute idle window — GateGuard's state expires on `SESSION_TIMEOUT_MS`, so it re-fires in long sessions. The destructive gate is where the value is: a rollback line before `rm -rf` or `git push --force` |
 
-`stop:desktop-notify` was already disabled before this.
+`stop:desktop-notify` was already disabled before this. After these changes, a
+read-only tool call (`Read`, `Grep`, `Glob`) runs zero PreToolUse hooks.
 
 ## Regenerating
 
