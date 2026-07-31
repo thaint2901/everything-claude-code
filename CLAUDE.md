@@ -108,3 +108,4 @@ A formatter rewrites files on edit: check `git diff --stat` before `git add`.
 - Heredoc commit messages trip the `block-no-verify` hook — write the message to a file, `git commit -F`.
 - The formatter fires on Edit/Write but not on shell writes — script surgical edits in python/bash.
 - Review agents can write to the working tree even when asked only to read — check `git status` after running them, before committing.
+- `gh pr create` targets the upstream parent unless `gh repo set-default` points at the fork — and `--base` names the branch, not the repo, so pass `--repo` too.
