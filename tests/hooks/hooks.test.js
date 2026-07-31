@@ -1249,14 +1249,20 @@ async function runTests() {
       const sessionsDir = getCanonicalSessionsDir(isoHome);
       fs.mkdirSync(sessionsDir, { recursive: true });
 
-      // Create an active .tmp session file
-      const sessionFile = path.join(sessionsDir, '2026-02-11-test-session.tmp');
-      fs.writeFileSync(sessionFile, '# Session: 2026-02-11\n**Started:** 10:00\n');
+      // pre-compact targets the SAME file session-end.js derives for this
+      // session (getCurrentSessionFilePath), so the fixture filename must
+      // match: {today}-{shortId}-session.tmp with shortId from CLAUDE_SESSION_ID.
+      const utils = require('../../scripts/lib/utils');
+      const today = utils.getDateString();
+      const shortId = 'annotat1';
+      const sessionFile = path.join(sessionsDir, `${today}-${shortId}-session.tmp`);
+      fs.writeFileSync(sessionFile, `# Session: ${today}\n**Started:** 10:00\n`);
 
       try {
         await runScript(path.join(scriptsDir, 'pre-compact.js'), '', {
           HOME: isoHome,
-          USERPROFILE: isoHome
+          USERPROFILE: isoHome,
+          CLAUDE_SESSION_ID: `session-${shortId}`
         });
 
         const content = fs.readFileSync(sessionFile, 'utf8');
@@ -3762,8 +3768,12 @@ async function runTests() {
       const sessionsDir = getCanonicalSessionsDir(isoHome);
       fs.mkdirSync(sessionsDir, { recursive: true });
 
-      // Create a session .tmp file and a non-session .tmp file
-      const sessionFile = path.join(sessionsDir, '2026-02-11-abc-session.tmp');
+      // Create the current session's .tmp file (matching getCurrentSessionFilePath's
+      // derivation from CLAUDE_SESSION_ID) and an unrelated non-session .tmp file.
+      const utils = require('../../scripts/lib/utils');
+      const today = utils.getDateString();
+      const shortId = 'globtest';
+      const sessionFile = path.join(sessionsDir, `${today}-${shortId}-session.tmp`);
       const otherTmpFile = path.join(sessionsDir, 'other-data.tmp');
       fs.writeFileSync(sessionFile, '# Session\n');
       fs.writeFileSync(otherTmpFile, 'some other data\n');
@@ -3771,7 +3781,8 @@ async function runTests() {
       try {
         await runScript(path.join(scriptsDir, 'pre-compact.js'), '', {
           HOME: isoHome,
-          USERPROFILE: isoHome
+          USERPROFILE: isoHome,
+          CLAUDE_SESSION_ID: `session-${shortId}`
         });
 
         const sessionContent = fs.readFileSync(sessionFile, 'utf8');
@@ -4684,33 +4695,39 @@ async function runTests() {
   console.log('\nRound 41: pre-compact.js (multiple session files):');
 
   if (
-    await asyncTest('annotates only the newest session file when multiple exist', async () => {
+    await asyncTest('annotates the current session file, not merely the newest one', async () => {
       const isoHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-compact-multi-'));
       const sessionsDir = getCanonicalSessionsDir(isoHome);
       fs.mkdirSync(sessionsDir, { recursive: true });
 
-      // Create two session files with different mtimes
-      const olderSession = path.join(sessionsDir, '2026-01-01-older-session.tmp');
-      const newerSession = path.join(sessionsDir, '2026-02-11-newer-session.tmp');
-      fs.writeFileSync(olderSession, '# Older Session\n');
-      // Small delay to ensure different mtime
+      // Regression test: pre-compact used to pick the globally most-recently
+      // modified *-session.tmp file, which could annotate a different session's
+      // (or a different project's) file. Here the OTHER session's file is made
+      // strictly newer, but pre-compact must still target the CURRENT session's
+      // file (derived from CLAUDE_SESSION_ID via getCurrentSessionFilePath).
+      const utils = require('../../scripts/lib/utils');
+      const today = utils.getDateString();
+      const shortId = 'multitst';
+      const currentSession = path.join(sessionsDir, `${today}-${shortId}-session.tmp`);
+      const newerOtherSession = path.join(sessionsDir, `${today}-otherses-session.tmp`);
+      fs.writeFileSync(currentSession, '# Current Session\n');
       const now = Date.now();
-      fs.utimesSync(olderSession, new Date(now - 60000), new Date(now - 60000));
-      fs.writeFileSync(newerSession, '# Newer Session\n');
+      fs.writeFileSync(newerOtherSession, '# Other Session\n');
+      fs.utimesSync(newerOtherSession, new Date(now + 60000), new Date(now + 60000));
 
       try {
         const result = await runScript(path.join(scriptsDir, 'pre-compact.js'), '', {
           HOME: isoHome,
-          USERPROFILE: isoHome
+          USERPROFILE: isoHome,
+          CLAUDE_SESSION_ID: `session-${shortId}`
         });
         assert.strictEqual(result.code, 0);
 
-        const newerContent = fs.readFileSync(newerSession, 'utf8');
-        const olderContent = fs.readFileSync(olderSession, 'utf8');
+        const currentContent = fs.readFileSync(currentSession, 'utf8');
+        const otherContent = fs.readFileSync(newerOtherSession, 'utf8');
 
-        // findFiles sorts by mtime newest first, so sessions[0] is the newest
-        assert.ok(newerContent.includes('Compaction occurred'), 'Should annotate the newest session file');
-        assert.strictEqual(olderContent, '# Older Session\n', 'Should NOT annotate older session files');
+        assert.ok(currentContent.includes('Compaction occurred'), 'Should annotate the current session file');
+        assert.strictEqual(otherContent, '# Other Session\n', 'Should NOT annotate a different session file, even if newer');
       } finally {
         fs.rmSync(isoHome, { recursive: true, force: true });
       }
@@ -6210,9 +6227,14 @@ Some random content without the expected ### Context to Load section
       const sessionsDir = path.join(testDir, '.claude', 'session-data');
       fs.mkdirSync(sessionsDir, { recursive: true });
 
-      // Create a minimal session .tmp file
-      const sessionFile = path.join(sessionsDir, '2026-01-01-test-session.tmp');
-      fs.writeFileSync(sessionFile, '# Session: 2026-01-01\n');
+      // Create a minimal session .tmp file matching what pre-compact will
+      // target via getCurrentSessionFilePath(). transcript.jsonl below has no
+      // UUID in its filename, so derivation falls back to CLAUDE_SESSION_ID.
+      const utils = require('../../scripts/lib/utils');
+      const today = utils.getDateString();
+      const shortId = 'skipllm1';
+      const sessionFile = path.join(sessionsDir, `${today}-${shortId}-session.tmp`);
+      fs.writeFileSync(sessionFile, `# Session: ${today}\n`);
 
       // Create a minimal transcript with one user message
       const transcriptPath = path.join(testDir, 'transcript.jsonl');
@@ -6222,6 +6244,7 @@ Some random content without the expected ### Context to Load section
       const stdinJson = JSON.stringify({ transcript_path: transcriptPath });
       const result = await runScript(path.join(scriptsDir, 'pre-compact.js'), stdinJson, {
         HOME: testDir,
+        CLAUDE_SESSION_ID: `session-${shortId}`,
         ECC_SKIP_LLM_SUMMARY: '1'
       });
 

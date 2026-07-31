@@ -199,6 +199,43 @@ function getSessionIdShort(fallback = 'default') {
 }
 
 /**
+ * Derive the path of the CURRENT session's session-data file.
+ *
+ * Shared by session-end.js (writer of record) and pre-compact.js so both
+ * hooks agree on the exact same file — enforced by
+ * tests/hooks/pre-compact.test.js ('both hooks derive the same path').
+ * Previously each hook computed this independently (or, for pre-compact,
+ * picked the globally most-recently-modified session file), which could
+ * write a compaction summary into an unrelated session's — or even a
+ * different project's — file.
+ *
+ * Prefers the UUID embedded in transcript_path's filename (last 8 hex chars,
+ * sanitized) so a parent session and any `claude -p ...` subprocess spawned
+ * by another Stop hook never collide (see issue #1494); falls back to
+ * getSessionIdShort() when no transcript is available.
+ *
+ * @param {string|null} transcriptPath - transcript_path from hook stdin, if any
+ * @returns {string} Absolute path to today's session file for this session id
+ */
+function getCurrentSessionFilePath(transcriptPath) {
+  const sessionsDir = getSessionsDir();
+  const today = getDateString();
+
+  let shortId = null;
+  if (transcriptPath) {
+    const m = path.basename(transcriptPath).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i);
+    if (m) {
+      shortId = sanitizeSessionId(m[1].slice(-8).toLowerCase());
+    }
+  }
+  if (!shortId) {
+    shortId = getSessionIdShort();
+  }
+
+  return path.join(sessionsDir, `${today}-${shortId}-session.tmp`);
+}
+
+/**
  * Get current datetime in YYYY-MM-DD HH:MM:SS format
  */
 function getDateTimeString() {
@@ -619,6 +656,7 @@ module.exports = {
   // Session/Project
   sanitizeSessionId,
   getSessionIdShort,
+  getCurrentSessionFilePath,
   getGitRepoName,
   getProjectName,
 
