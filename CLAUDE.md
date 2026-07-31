@@ -107,5 +107,6 @@ A formatter rewrites files on edit: check `git diff --stat` before `git add`.
 - `thaint-setup` is both a branch and a directory — use `git switch <branch>` and `refs/heads/<branch>`.
 - Heredoc commit messages trip the `block-no-verify` hook — write the message to a file, `git commit -F`.
 - The formatter fires on Edit/Write but not on shell writes — script surgical edits in python/bash.
+- The test suite inherits the session's env: hook ids in `ECC_DISABLED_HOOKS` (or flags like `GATEGUARD_BASH_ROUTINE_DISABLED`) make the corresponding hook tests fail with `permissionDecision` undefined. Before blaming code, rerun with `env -u ECC_DISABLED_HOOKS -u GATEGUARD_BASH_ROUTINE_DISABLED node tests/run-all.js`.
 - Review agents can write to the working tree even when asked only to read — check `git status` after running them, before committing.
 - `gh pr create` targets the upstream parent unless `gh repo set-default` points at the fork — and `--base` names the branch, not the repo, so pass `--repo` too.

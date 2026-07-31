@@ -16,6 +16,8 @@ const path = require('path');
 const { sanitizeSessionId, readBridge, renameWithRetry } = require('../lib/session-bridge');
 
 const CONTEXT_WARNING_PCT = 35;
+// LOCAL (thaint): window-used percentage from which the delegation reminder fires.
+const DELEGATION_MIN_USED_PCT = 35;
 const CONTEXT_CRITICAL_PCT = 25;
 const COST_NOTICE_USD = 5;
 const COST_WARNING_USD = 10;
@@ -133,6 +135,19 @@ function evaluateConditions(bridge, options = {}) {
         severity: 2,
         type: 'context',
         message: `CONTEXT WARNING: ${remaining}% remaining. ` + 'Be aware that context is getting limited. Avoid starting new complex work.'
+      });
+    }
+
+    // LOCAL (thaint): from DELEGATION_MIN_USED_PCT of the window onward,
+    // remind to hand the next independent task to a subagent/fork
+    // (CLAUDE.md §7). The message rounds usage to 10-point steps so run()'s
+    // text-content dedupe re-surfaces it once per step, not on every 1% tick.
+    if (100 - remaining >= DELEGATION_MIN_USED_PCT) {
+      const usedStep = Math.floor((100 - remaining) / 10) * 10;
+      warnings.push({
+        severity: 1,
+        type: 'delegation',
+        message: `[Delegation] context ~${usedStep}% used - hand the next independent task to a subagent/fork (CLAUDE.md §7)`
       });
     }
   }

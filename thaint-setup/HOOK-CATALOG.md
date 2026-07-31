@@ -54,7 +54,7 @@ all nine in-process, plus `post:bash:dispatcher` for the Bash group below.
 | `post:governance-capture` | governance-capture | Post-call half of the governance event capture |
 | `post:session-activity-tracker` | session-activity-tracker | Records sanitized per-tool activity to `~/.claude/metrics/tool-usage.jsonl` |
 | `post:ecc-metrics-bridge` | ecc-metrics-bridge | Maintains a session aggregate at `/tmp/ecc-metrics-{session}.json` so consumers avoid scanning large JSONL logs |
-| `post:ecc-context-monitor` | ecc-context-monitor | Reads the bridge file and injects warnings on context exhaustion, high cost, scope creep, or tool loops |
+| `post:ecc-context-monitor` | ecc-context-monitor | Reads the bridge file and injects warnings on context exhaustion, high cost, scope creep, or tool loops. `LOCAL (thaint)`: also reminds to delegate the next task to a subagent/fork from 35% window usage onward, stepped every 10 points — moved here from `suggest-compact`, whose `Edit\|Write` matcher never saw read-heavy sessions |
 | `post:quality-gate` | quality-gate | Lightweight per-file quality checks after edits; no-ops when tooling is unavailable |
 | `post:observe:continuous-learning` | observe-runner | Records tool results for continuous-learning signals — `inferred`, no docblock |
 
