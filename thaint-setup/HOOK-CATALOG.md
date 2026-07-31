@@ -27,19 +27,32 @@ One `hooks.json` entry (`pre-bash-dispatcher`) runs all six in-process.
 | `pre:bash:commit-quality` | pre-bash-commit-quality | Reads staged content (`git show :file`, not the working tree) and blocks the commit with exit 2 on leaked API keys (`sk-ant-`, `sk-`, `ghp_`, `AKIA`, `api_key = "…"`) or a `debugger` statement. Warns without blocking on `console.log`, unreferenced TODO/FIXME, and commit-message format. Also runs ESLint/Pylint/golint on staged files, 30 s each — a lint failure blocks. Skips `--amend` |
 | `pre:bash:gateguard-fact-force` | gateguard-fact-force | Denies the first Bash call and demands facts (request restated, what the command produces) before allowing the retry |
 
+## PreToolUse · Edit/Write
+
+One `hooks.json` entry (`pre:edit-write:dispatcher`, matcher
+`Edit|Write|MultiEdit`) runs all four in-process via
+`pre-edit-write-dispatcher` → `edit-write-hook-dispatcher`, in this order —
+hard denials first, advisory last; the first deny short-circuits the chain.
+`LOCAL (thaint)`: this consolidation mirrors upstream's own Bash dispatcher;
+see `UPSTREAM.md`. Each member keeps its id, so `ECC_DISABLED_HOOKS` still
+gates them individually.
+
+| # | ID | Sees | Purpose |
+| --- | --- | --- | --- |
+| 1 | `pre:config-protection` | Edit\|Write\|MultiEdit | Blocks edits to *existing* linter/formatter config files, so agents fix the source instead of loosening the check. Creating a brand-new config is allowed — runs before GateGuard so a protected file gets the hard deny without burning its first-touch pass |
+| 2 | `pre:edit-write:gateguard-fact-force` | Edit\|Write\|MultiEdit | Denies the first edit per file and demands importers, affected API, and data schema before allowing the retry |
+| 3 | `pre:write:doc-file-warning` | Write | Denylist warning on ad-hoc doc filenames (NOTES, TODO, SCRATCH) outside structured directories |
+| 4 | `pre:edit-write:suggest-compact` | Edit\|Write | Suggests manual compaction at logical intervals rather than letting auto-compact fire mid-task |
+
 ## PreToolUse · separate entries
 
 Each is its own `hooks.json` entry, so each spawns its own node process.
 
 | ID | Matcher | Timeout | Purpose |
 | --- | --- | --- | --- |
-| `pre:write:doc-file-warning` | Write | — | Denylist warning on ad-hoc doc filenames (NOTES, TODO, SCRATCH) outside structured directories |
-| `pre:edit-write:suggest-compact` | Edit\|Write | — | Suggests manual compaction at logical intervals rather than letting auto-compact fire mid-task |
 | `pre:observe` (async) | * | 10s | Records tool intent for continuous-learning signals — `inferred`, no docblock; purpose text from `hooks/memory-persistence/hooks.json` |
 | `pre:governance-capture` | Bash\|Write\|Edit\|MultiEdit | 10s | Writes governance-relevant events to the `governance_events` table in the state store |
-| `pre:config-protection` | Write\|Edit\|MultiEdit | 5s | Blocks edits to linter/formatter config files, so agents fix the source instead of loosening the check |
 | `pre:mcp-health-check` | * | — | Probes MCP server health before an MCP tool call |
-| `pre:edit-write:gateguard-fact-force` | Edit\|Write\|MultiEdit | 5s | Denies the first edit per file and demands importers, affected API, and data schema before allowing the retry |
 
 ## PostToolUse
 
@@ -85,11 +98,18 @@ Reached via `post:bash:dispatcher` → `post-bash-dispatcher`.
 | `stop:desktop-notify` (async) | Stop | desktop-notify | Native desktop notification with the task summary on finish |
 | `session:end:marker` (async) | SessionEnd | session-end-marker | Observer cleanup; passes stdin through unchanged |
 
-## Infrastructure — 8 scripts, no behavior of their own
+## Infrastructure — 10 scripts, no behavior of their own
 
 `plugin-hook-bootstrap` · `run-with-flags` · `pre-bash-dispatcher` ·
-`bash-hook-dispatcher` · `posttooluse-dispatcher` · `post-bash-dispatcher` ·
-`session-start-bootstrap` · `pretooluse-visible-output`
+`bash-hook-dispatcher` · `pre-edit-write-dispatcher` ·
+`edit-write-hook-dispatcher` · `posttooluse-dispatcher` ·
+`post-bash-dispatcher` · `session-start-bootstrap` ·
+`pretooluse-visible-output`
+
+The Edit/Write pair is `LOCAL (thaint)` (plus `scripts/lib/pretooluse-hook-runner.js`,
+extracted because the Bash runner's short-circuit only checks exit codes, while
+GateGuard denies via JSON at exit 0 — harmless there since GateGuard runs last
+in the Bash chain, wrong here where it runs mid-chain).
 
 ## Shipped but not running as hooks — 8 scripts
 
@@ -104,7 +124,7 @@ Reached via `post:bash:dispatcher` → `post-bash-dispatcher`.
 | `pre-bash-dev-server-block` | Superseded by `auto-tmux-dev` |
 | `check-hook-enabled` | Utility, not registered |
 
-32 running + 8 infrastructure + 8 unregistered = 48 files in `scripts/hooks/`.
+32 running + 10 infrastructure + 8 unregistered = 50 files in `scripts/hooks/`.
 
 ## Known staleness
 

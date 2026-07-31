@@ -42,6 +42,7 @@ Deps: cargo minor/patch group (#2593), pyyaml ≥6.0.3 (#2455), pytest-mock
 | `buildContextBar` drops upstream's 16.5-point auto-compact reserve — 33K tokens, which no fixed percentage tracks across a 100K–1M window; drew 53 where Claude Code reported 44. Arrived in `940135ea` from a stale PR, uncommented | Unmarked on purpose — drop the moment upstream fixes it, and file the issue |
 | `tests/lib/dry-run.test.js` gets a `maxBuffer` — `ecc.js --dry-run --json typescript` emits ~1.1 MB past the 1 MiB default, which reddened CI on every commit, upstream's included | Unmarked — drop when upstream fixes it |
 | `README.md` calls raw-copying `hooks/hooks.json` unsupported (the files are byte-identical); `docs/TROUBLESHOOTING.md` says hook changes need a restart (they do not) | Re-check both claims after a merge |
+| `pre-edit-write-dispatcher.js` folds config-protection, gateguard-fact-force, doc-file-warning, and suggest-compact into one PreToolUse process — mirrors upstream's own `pre-bash-dispatcher.js` pattern for Bash | Candidate to upstream as a PR; drop if upstream adopts it |
 
 Overlaps our changes in 5 files — `scripts/hooks/cost-tracker.js`,
 `scripts/lib/utils.js`, `tests/hooks/cost-tracker.test.js`,

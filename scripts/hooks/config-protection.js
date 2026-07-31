@@ -145,32 +145,39 @@ function run(inputOrRaw, options = {}) {
 
 module.exports = { run };
 
-// Stdin fallback for spawnSync execution
-let truncated = /^(1|true|yes)$/i.test(String(process.env.ECC_HOOK_INPUT_TRUNCATED || ''));
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', chunk => {
-  if (raw.length < MAX_STDIN) {
-    const remaining = MAX_STDIN - raw.length;
-    raw += chunk.substring(0, remaining);
-    if (chunk.length > remaining) truncated = true;
-  } else {
-    truncated = true;
-  }
-});
-
-process.stdin.on('end', () => {
-  const result = run(raw, {
-    truncated,
-    maxStdin: Number(process.env.ECC_HOOK_INPUT_MAX_BYTES) || MAX_STDIN
+// Stdin fallback for spawnSync execution — only when invoked directly, not
+// via require(). Without this guard, any caller that require()s this module
+// before draining stdin itself (e.g. a consolidated dispatcher) would race
+// this listener against its own, since Node delivers 'data'/'end' to every
+// listener attached before the event fires (see doc-file-warning.js, which
+// uses the same guard).
+if (require.main === module) {
+  let truncated = /^(1|true|yes)$/i.test(String(process.env.ECC_HOOK_INPUT_TRUNCATED || ''));
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', chunk => {
+    if (raw.length < MAX_STDIN) {
+      const remaining = MAX_STDIN - raw.length;
+      raw += chunk.substring(0, remaining);
+      if (chunk.length > remaining) truncated = true;
+    } else {
+      truncated = true;
+    }
   });
 
-  if (result.stderr) {
-    process.stderr.write(result.stderr + '\n');
-  }
+  process.stdin.on('end', () => {
+    const result = run(raw, {
+      truncated,
+      maxStdin: Number(process.env.ECC_HOOK_INPUT_MAX_BYTES) || MAX_STDIN
+    });
 
-  if (result.exitCode === 2) {
-    process.exit(2);
-  }
+    if (result.stderr) {
+      process.stderr.write(result.stderr + '\n');
+    }
 
-  process.stdout.write(raw);
-});
+    if (result.exitCode === 2) {
+      process.exit(2);
+    }
+
+    process.stdout.write(raw);
+  });
+}

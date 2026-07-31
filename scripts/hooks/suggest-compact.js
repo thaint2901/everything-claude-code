@@ -193,18 +193,26 @@ function buildContextSuggestion(transcriptPath, bucketFile, env) {
   }
 }
 
-async function main() {
-  // Claude Code passes hook input via stdin JSON; session_id is the
-  // canonical field (legacy env var, then 'default', as fallbacks) and
-  // transcript_path points at the session transcript JSONL used by the
-  // context-size signal.
-  let input = {};
+/**
+ * Exportable run() for in-process execution via run-with-flags.js (or a
+ * consolidated dispatcher). Accepts the hook payload as a raw JSON string or
+ * an already-parsed object; returns { exitCode, additionalContext? } instead
+ * of writing to stdout/stderr directly, per the run(rawInput) contract used
+ * by other ECC hooks (see doc-file-warning.js, config-protection.js).
+ */
+function run(inputOrRaw, _options = {}) {
+  let input;
   try {
-    input = await readStdinJson({ timeoutMs: 1000 });
+    input = typeof inputOrRaw === 'string'
+      ? (inputOrRaw.trim() ? JSON.parse(inputOrRaw) : {})
+      : (inputOrRaw || {});
   } catch {
     input = {};
   }
 
+  // session_id is the canonical field (legacy env var, then 'default', as
+  // fallbacks) and transcript_path points at the session transcript JSONL
+  // used by the context-size signal.
   const rawSessionId = (input && typeof input.session_id === 'string' && input.session_id)
     ? input.session_id
     : (process.env.CLAUDE_CODE_SESSION_ID || process.env.CLAUDE_SESSION_ID || 'default');
@@ -243,6 +251,36 @@ async function main() {
     messages.push(`[StrategicCompact] ${count} tool calls - good checkpoint for /compact if context is stale`);
   }
 
+  if (messages.length > 0) {
+    for (const msg of messages) {
+      log(msg);
+    }
+    return {
+      exitCode: 0,
+      additionalContext: messages.join('\n')
+    };
+  }
+
+  return { exitCode: 0 };
+}
+
+/**
+ * Stdin entrypoint for direct/spawnSync execution: reads the hook payload
+ * from stdin and writes the PreToolUse result to stdout, matching the
+ * original standalone behavior exactly. Must only run when invoked
+ * directly, never on require(), so the stdin listeners are not leaked into
+ * a parent that loads this hook in-process (see doc-file-warning.js).
+ */
+async function main() {
+  let input = {};
+  try {
+    input = await readStdinJson({ timeoutMs: 1000 });
+  } catch {
+    input = {};
+  }
+
+  const result = run(input);
+
   // log() writes to stderr (debug log). Per the Claude Code hooks guide,
   // non-blocking PreToolUse stderr (exit 0) is only written to the debug log;
   // it does not reach the model. To inject a user-facing suggestion without
@@ -250,14 +288,11 @@ async function main() {
   // hookSpecificOutput.additionalContext — the documented mechanism for
   // PreToolUse hooks to add context to the next model turn. Hooks must emit
   // at most one stdout JSON payload per run, so both signals share it.
-  if (messages.length > 0) {
-    for (const msg of messages) {
-      log(msg);
-    }
+  if (result.additionalContext) {
     output({
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
-        additionalContext: messages.join('\n')
+        additionalContext: result.additionalContext
       }
     });
   }
@@ -265,7 +300,12 @@ async function main() {
   process.exit(0);
 }
 
-main().catch(err => {
-  console.error('[StrategicCompact] Error:', err.message);
-  process.exit(0);
-});
+module.exports = { run, main };
+
+// Stdin fallback for spawnSync execution — only when invoked directly, not via require()
+if (require.main === module) {
+  main().catch(err => {
+    console.error('[StrategicCompact] Error:', err.message);
+    process.exit(0);
+  });
+}
