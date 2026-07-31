@@ -59,6 +59,19 @@ Each is its own `hooks.json` entry, so each spawns its own node process.
 Two `hooks.json` entries for `posttooluse-dispatcher` (sync 30s, async 45s) run
 all nine in-process, plus `post:bash:dispatcher` for the Bash group below.
 
+**Do not merge the two entries into one.** The split is functional, not
+redundant: the sync set holds hooks that inject `additionalContext` (a warning
+only reaches the model if the hook completes before the turn continues), while
+the async set holds the slow ones — `quality-gate` runs a linter, the Bash group
+writes logs — which run detached so an edit is not billed the linter's wall
+clock. Collapsing them either makes every edit wait on the linter or silently
+drops the context injections. Two processes per tool call is the correct price.
+
+The async entry does register matcher `*`, so a read-only call still spawns one
+process that finds nothing to do. Narrowing it means editing `hooks/hooks.json`,
+an upstream-tracked file, and buying a few non-blocking milliseconds with a new
+merge-conflict surface. Deliberately left alone.
+
 | ID | Script | Purpose |
 | --- | --- | --- |
 | `post:edit:design-quality-check` | design-quality-check | Self-contained frontend design-drift reminder; no remote models, no installs |
@@ -91,7 +104,7 @@ Reached via `post:bash:dispatcher` → `post-bash-dispatcher`.
 | — | SessionStart | session-start | Loads the most recent session summary into context via stdout (invoked through `session-start-bootstrap`) |
 | `session-start:plan-canvas-sessions` | SessionStart | plan-canvas-sessions | Surfaces a Plan Canvas review left open by a previous session |
 | `stop:format-typecheck` | Stop | stop-format-typecheck | Reads the accumulator written by `post:edit:accumulator`, then runs the formatter once per project root and `tsc --noEmit` once per tsconfig dir, filtering output to the edited files (10 lines each). Clears the accumulator so repeated Stops do not re-process. **Do not lower the 300 s timeout:** the hook budgets 270 s internally and divides it evenly across batches, so a lower ceiling shrinks every per-batch timeout and makes typechecks expire silently — it fails open |
-| `stop:check-console-log` | Stop | check-console-log | Warns if modified JS/TS files contain `console.log` — overlaps `post:edit:console-warn` |
+| `stop:check-console-log` | Stop | check-console-log | Warns if modified JS/TS files contain `console.log`. Discovers files via `git diff --name-only HEAD` (`getGitModifiedFiles`), so it sees tracked-and-modified files only. Now the sole `console.log` check — `post:edit:console-warn` is disabled here, see below |
 | `stop:session-end` (async) | Stop | session-end | Extracts a summary from the transcript and persists learnings during an active session |
 | `stop:evaluate-session` (async) | Stop | evaluate-session | Extracts reusable patterns from the transcript for continuous learning |
 | `stop:cost-tracker` (async) | Stop | cost-tracker | Writes session cost to the metrics log — `inferred`, no docblock |
@@ -154,7 +167,8 @@ same dispatcher, rejects the flag outright. The working bypass is
 
 ### Disabled in this setup
 
-Both set in `~/.claude/settings.json` under `env`:
+All set in `~/.claude/settings.json` — the `ECC_DISABLED_HOOKS` and
+`GATEGUARD_*` entries under `env`, the matcher change on its hook entry:
 
 | Setting | Effect | Reason |
 | --- | --- | --- |
@@ -162,6 +176,8 @@ Both set in `~/.claude/settings.json` under `env`:
 | `ECC_DISABLED_HOOKS=…,pre:observe,post:observe:continuous-learning` | Drops both observe registrations | Empty shell here: the runner only delegates to `skills/continuous-learning-v2/hooks/observe.sh`, which is not installed under `~/.claude` — every tool call spawned a process that exited with "script not found". Re-enabling requires installing that skill first, not just removing the id |
 | `ECC_DISABLED_HOOKS=…,pre:governance-capture,post:governance-capture` | Drops both governance registrations | Off by default anyway (`governance-capture.js:255` requires `ECC_GOVERNANCE_CAPTURE=1`, unset here), so both entries spawned a process per Bash/Write/Edit only to exit. What it would log overlaps hooks that already *block*: secrets → `pre:bash:commit-quality`, destructive commands → GateGuard. To use it for real, set `ECC_GOVERNANCE_CAPTURE=1` and remove the ids |
 | `mcp-health-check` PreToolUse matcher `*` → `mcp__.*` | Probes only before MCP tool calls, per its own docblock | Matcher semantics (Claude Code docs): only regex when the value has a char outside `[letters digits _ - space , \|]`. Plain `mcp__` would be exact-matched and match **no** tool — the `.*` is load-bearing. The `PostToolUseFailure` registration is untouched |
+| `ECC_DISABLED_HOOKS=…,post:edit:console-warn` | Drops the per-edit `console.log` warning, keeps `stop:check-console-log` | Duplicate check. The end-of-turn one is the right place: a `console.log` in a file still being edited is normal, so the per-edit warning fires while the condition is expected. Coverage is near-identical because this hook's matcher is `Edit` alone — new files arrive via `Write` and it never saw them. Residual gap: `Edit` on an untracked file, or work outside a git repo, since the Stop hook reads `git diff HEAD` |
+| `ECC_DISABLED_HOOKS=…,post:session-activity-tracker` | Stops appending every tool call to `~/.claude/metrics/tool-usage.jsonl` | Nothing consumes the file automatically. The only reader in the tree is `scripts/observability-readiness.js`, a hand-run CLI gate. Re-enable by removing the id before running that tool |
 | `GATEGUARD_BASH_ROUTINE_DISABLED=1` | Drops the routine Bash gate, keeps the destructive gate | The routine gate costs a model round trip per firing to restate the request. "Once per session" is really once per 30-minute idle window — GateGuard's state expires on `SESSION_TIMEOUT_MS`, so it re-fires in long sessions. The destructive gate is where the value is: a rollback line before `rm -rf` or `git push --force` |
 
 `stop:desktop-notify` was already disabled before this. After these changes, a
