@@ -10,7 +10,7 @@ function run(rawInput) {
     const cmd = String(input.tool_input?.command || '');
 
     if (/\bgh\s+pr\s+create\b/.test(cmd)) {
-      const out = String(input.tool_output?.output || '');
+      const out = String(input.tool_response?.stdout || input.tool_output?.output || '');
       const match = out.match(/https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/);
       if (match) {
         const prUrl = match[0];
