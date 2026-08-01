@@ -756,6 +756,42 @@ async function runTests() {
     }
   })) passed++; else failed++;
 
+  if (test('dispatches on real hook_event_name/tool_response payload shape (no CLAUDE_HOOK_EVENT_NAME env var set)', () => {
+    // Claude Code never sets CLAUDE_HOOK_EVENT_NAME; it puts hook_event_name in the
+    // JSON body and the tool result under tool_response: {stdout, stderr}. Every other
+    // PostToolUseFailure test above sets CLAUDE_HOOK_EVENT_NAME as an env var, which
+    // real Claude Code never does — that masks the dispatch bug this test targets.
+    const tempDir = createTempDir();
+    const statePath = path.join(tempDir, 'mcp-health.json');
+
+    try {
+      const result = runHook(
+        {
+          hook_event_name: 'PostToolUseFailure',
+          tool_name: 'mcp__noplan__messages',
+          tool_input: {},
+          tool_response: {
+            stdout: '',
+            stderr: '403 Forbidden from upstream MCP'
+          }
+        },
+        {
+          ECC_MCP_HEALTH_STATE_PATH: statePath,
+          ECC_MCP_RECONNECT_COMMAND: null
+        }
+      );
+
+      assert.strictEqual(result.code, 0, 'Expected post-failure hook to remain non-blocking');
+      assert.ok(result.stderr.includes('reported 403'), `Expected detected failure code log, got: ${result.stderr}`);
+
+      const state = readState(statePath);
+      assert.strictEqual(state.servers.noplan.status, 'unhealthy', 'Expected post-failure to mark server unhealthy');
+      assert.strictEqual(state.servers.noplan.lastFailureCode, 403, 'Expected detected status code in state');
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  })) passed++; else failed++;
+
   if (test('post-failure reports failed reconnect commands', () => {
     const tempDir = createTempDir();
     const statePath = path.join(tempDir, 'mcp-health.json');

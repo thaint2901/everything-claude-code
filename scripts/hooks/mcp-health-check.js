@@ -229,14 +229,17 @@ function markUnhealthy(state, serverName, now, failureCode, errorMessage) {
 }
 
 function failureSummary(input) {
-  const output = input.tool_output;
+  const response = input.tool_response;
+  const legacyOutput = input.tool_output;
   const pieces = [
     typeof input.error === 'string' ? input.error : '',
     typeof input.message === 'string' ? input.message : '',
-    typeof input.tool_response === 'string' ? input.tool_response : '',
-    typeof output === 'string' ? output : '',
-    typeof output?.output === 'string' ? output.output : '',
-    typeof output?.stderr === 'string' ? output.stderr : '',
+    typeof response === 'string' ? response : '',
+    typeof response?.stdout === 'string' ? response.stdout : '',
+    typeof response?.stderr === 'string' ? response.stderr : '',
+    typeof legacyOutput === 'string' ? legacyOutput : '',
+    typeof legacyOutput?.output === 'string' ? legacyOutput.output : '',
+    typeof legacyOutput?.stderr === 'string' ? legacyOutput.stderr : '',
     typeof input.tool_input?.error === 'string' ? input.tool_input.error : ''
   ].filter(Boolean);
 
@@ -730,7 +733,7 @@ async function main() {
     return;
   }
 
-  const eventName = process.env.CLAUDE_HOOK_EVENT_NAME || 'PreToolUse';
+  const eventName = (typeof input.hook_event_name === 'string' && input.hook_event_name) || process.env.CLAUDE_HOOK_EVENT_NAME || 'PreToolUse';
   const now = Date.now();
   const statePathValue = stateFilePath();
 
