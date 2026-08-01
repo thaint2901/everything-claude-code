@@ -157,6 +157,22 @@ not confirmed with a live transcript capture: the warning likely never reaches
 the model despite the detection logic running correctly. Undecided — not yet
 disabled or fixed.
 
+The same stderr-only defect repeats in two more hooks, traced from source, not
+live-confirmed, both undecided:
+
+- `post-edit-console-warn.js` (`post:edit:console-warn`) — also in
+  `posttooluse-dispatcher.js`'s `SYNC_HOOKS` list, same `stderr`-only return.
+  Even while this hook was enabled its console.log warning likely never reached
+  the model — one more reason (on top of duplicating `stop:check-console-log`)
+  it was disabled.
+- `post-bash-pr-created.js` (`post:bash:pr-created`) — reached via
+  `bash-hook-dispatcher.js`'s `POST_BASH_HOOKS`, itself inside
+  `posttooluse-dispatcher.js`'s async group. Detects a `gh pr create` URL
+  correctly and suggests a `gh pr review` command, but only on `stderr`; async
+  PostToolUse hooks in Claude Code do not feed `additionalContext` back into the
+  live turn regardless, so this one was architecturally unable to reach the
+  model even before considering the stderr channel.
+
 Every unregistered script above still has a passing test, which is why none of
 this surfaced: the tests prove the module works, not that it is wired.
 
@@ -186,7 +202,7 @@ All set in `~/.claude/settings.json` — the `ECC_DISABLED_HOOKS` and
 | `ECC_DISABLED_HOOKS=…,pre:bash:git-push-reminder` | Drops the push reminder | Unfinished stub; fires on every push and changes nothing |
 | `ECC_DISABLED_HOOKS=…,pre:observe,post:observe:continuous-learning` | Drops both observe registrations | Empty shell here: the runner only delegates to `skills/continuous-learning-v2/hooks/observe.sh`, which is not installed under `~/.claude` — every tool call spawned a process that exited with "script not found". Re-enabling requires installing that skill first, not just removing the id |
 | `ECC_DISABLED_HOOKS=…,pre:governance-capture,post:governance-capture` | Drops both governance registrations | Off by default anyway (`governance-capture.js:255` requires `ECC_GOVERNANCE_CAPTURE=1`, unset here), so both entries spawned a process per Bash/Write/Edit only to exit. What it would log overlaps hooks that already *block*: secrets → `pre:bash:commit-quality`, destructive commands → GateGuard. To use it for real, set `ECC_GOVERNANCE_CAPTURE=1` and remove the ids |
-| `mcp-health-check` PreToolUse matcher `*` → `mcp__.*` | Probes only before MCP tool calls, per its own docblock | Matcher semantics (Claude Code docs): only regex when the value has a char outside `[letters digits _ - space , \|]`. Plain `mcp__` would be exact-matched and match **no** tool — the `.*` is load-bearing. The `PostToolUseFailure` registration is untouched |
+| `mcp-health-check` PreToolUse **and** PostToolUseFailure matcher `*` → `mcp__.*` | Probes/reacts only for MCP tool calls, per its own docblock | Matcher semantics (Claude Code docs): only regex when the value has a char outside `[letters digits _ - space , \|]`. Plain `mcp__` would be exact-matched and match **no** tool — the `.*` is load-bearing. Both registrations share the fix now; the `PostToolUseFailure` side was narrowed after being found still on `*` (previously it ran on every tool failure, not just MCP ones, before recognizing the failure wasn't MCP-related and no-opping) |
 | `ECC_DISABLED_HOOKS=…,post:edit:console-warn` | Drops the per-edit `console.log` warning, keeps `stop:check-console-log` | Duplicate check. The end-of-turn one is the right place: a `console.log` in a file still being edited is normal, so the per-edit warning fires while the condition is expected. Coverage is near-identical because this hook's matcher is `Edit` alone — new files arrive via `Write` and it never saw them. Residual gap: `Edit` on an untracked file, or work outside a git repo, since the Stop hook reads `git diff HEAD` |
 | `ECC_DISABLED_HOOKS=…,post:session-activity-tracker` | Stops appending every tool call to `~/.claude/metrics/tool-usage.jsonl` | Nothing consumes the file automatically. The only reader in the tree is `scripts/observability-readiness.js`, a hand-run CLI gate. Re-enable by removing the id before running that tool |
 | `ECC_DISABLED_HOOKS=…,post:bash:command-log-audit,post:bash:command-log-cost` | Stops logging every Bash command to `~/.claude/bash-commands.log` and `~/.claude/cost-tracker.log` | Two near-duplicate logs with no consumer — grepped the whole tree including `*.md`, `commands/`, `skills/`, `docs/`: the only hits are the writer and its own tests. `bash-commands.log` had reached 31,925 lines here. Naming trap: `cost-tracker.log` holds no cost data, just commands; real cost accounting is `~/.claude/metrics/costs.jsonl` from the unrelated `stop:cost-tracker`, which stays on |
