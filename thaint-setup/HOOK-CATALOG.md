@@ -74,7 +74,7 @@ merge-conflict surface. Deliberately left alone.
 
 | ID | Script | Purpose |
 | --- | --- | --- |
-| `post:edit:design-quality-check` | design-quality-check | Self-contained frontend design-drift reminder; no remote models, no installs |
+| `post:edit:design-quality-check` | design-quality-check | Self-contained frontend design-drift reminder; no remote models, no installs. Emits its finding via `stderr` only — likely debug-log-only, see Known staleness |
 | `post:edit:accumulator` | post-edit-accumulator | Appends each edited JS/TS path to a session-scoped temp file for `stop:format-typecheck` to batch |
 | `post:edit:console-warn` | post-edit-console-warn | Warns with line numbers when an edited JS/TS file still contains `console.log` |
 | `post:governance-capture` | governance-capture | Post-call half of the governance event capture |
@@ -145,6 +145,17 @@ in the Bash chain, wrong here where it runs mid-chain).
 `post-edit-format` handles them — see its comments at lines 10, 53, and 74. That
 script is not registered anywhere, so JS/TS formatting happens only later, at
 `stop:format-typecheck`. The comments are stale, not the behavior.
+
+`design-quality-check.js` detects its drift signals correctly but returns them
+only on `output.stderr` (`run()`, line ~110), never on `output.additionalContext`.
+`posttooluse-dispatcher.js` only forwards the `additionalContext` field into the
+model-visible context (its context-collection step reads that key alone, ~line
+140); `stderr` is written straight to the dispatcher process's stderr (~line
+266) — the same debug-log-only channel `suggest-compact.js` and
+`doc-file-warning.js` document for non-blocking exit-0 hooks. Traced from source,
+not confirmed with a live transcript capture: the warning likely never reaches
+the model despite the detection logic running correctly. Undecided — not yet
+disabled or fixed.
 
 Every unregistered script above still has a passing test, which is why none of
 this surfaced: the tests prove the module works, not that it is wired.
