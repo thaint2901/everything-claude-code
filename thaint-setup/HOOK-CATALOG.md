@@ -109,7 +109,7 @@ Reached via `post:bash:dispatcher` → `post-bash-dispatcher`.
 | `stop:evaluate-session` (async) | Stop | evaluate-session | Extracts reusable patterns from the transcript for continuous learning |
 | `stop:cost-tracker` (async) | Stop | cost-tracker | Writes session cost to the metrics log — `inferred`, no docblock |
 | `stop:desktop-notify` (async) | Stop | desktop-notify | Native desktop notification with the task summary on finish |
-| `session:end:marker` (async) | SessionEnd | session-end-marker | Observer cleanup; passes stdin through unchanged |
+| `session:end:marker` (async) | SessionEnd | session-end-marker | Removes this session's observer lease and, if it was the last one, calls `stopObserverForContext` to stop the project's observer daemon. Verified: that daemon is never actually started here — `getObserverPidFile()` in `scripts/lib/observer-sessions.js` (`~/.local/share/ecc-homunculus/projects/<id>/.observer.pid`) is only ever read in the whole lib, never written, and no such file exists on disk. `~/.claude/daemon/roster.json` is unrelated — that belongs to Claude Code's own background-job supervisor. Net effect: the stop-branch always no-ops; the only real work is deleting a small lease JSON |
 
 ## Infrastructure — 10 scripts, no behavior of their own
 
