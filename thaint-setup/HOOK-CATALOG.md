@@ -281,6 +281,43 @@ file touched" and a test count of 3321 — while the branch touches
 `hooks/hooks.json`, 10 files under `scripts/`, and `CLAUDE.md`, and the real
 count (after all fixes above) is noted in the corrected PR description.
 
+### Round 2 — the fix above wasn't applied consistently
+
+A second `/review-pr` pass, run against the diff after the fixes above
+landed, found the `critical: true` fix itself was applied asymmetrically —
+confirmed independently by three agents (type-design-analyzer,
+silent-failure-hunter, code-simplifier):
+
+- **`gateguard-fact-force` was marked `critical` in the Edit/Write chain but
+  not in the Bash chain.** Same hook, same crash risk (`saveState()`
+  re-throws on a non-`EEXIST`/`EPERM` `renameSync` error — disk full,
+  permissions), but `bash-hook-dispatcher.js`'s `PRE_BASH_HOOKS` entry never
+  got the flag, so a crash while gating a Bash command still fell through to
+  `exitCode 0` — the exact bypass the Edit/Write fix closed, left open for
+  Bash. Fixed: `critical: true` added to the Bash entry, with a regression
+  test (monkeypatch a throw, confirm `exitCode 2`; red before, green after).
+- **`ECC_DRY_RUN` had no test against the real spawned dispatcher process** —
+  only an in-process `runHooks()` unit test with mock hooks. Added an
+  integration test: same input first proven to really block, then proven to
+  only preview under `ECC_DRY_RUN=1`.
+- **The Bash-chain ordering invariant (`gateguard-fact-force` must stay last)
+  had zero test coverage**, and gateguard's actual Bash-path deny behavior was
+  only ever tested through the legacy `run-with-flags.js` route, never the
+  real registered `pre-bash-dispatcher.js`. Fixed: extracted the inline check
+  into an exported `assertGateguardLast()`, tested directly against a
+  deliberately-reordered array; added an integration test spawning
+  `pre-bash-dispatcher.js` with a destructive Bash command against the live
+  route.
+- **A stale comment** in `pretooluse-hook-runner.js` still said
+  "`bash-hook-dispatcher.js` is left untouched" after the dedup refactor made
+  that false — flagged by two agents as a likely reason the asymmetry above
+  went unnoticed. Corrected.
+- **Test-realism note added, not a behavior fix**: the critical-hook-crash
+  tests monkeypatch a throw rather than trigger a realistic failure, since
+  `config-protection.js` already wraps its risky calls in try/catch and may
+  have no live path that throws today. Documented as a known limitation in
+  the tests themselves rather than engineered around.
+
 ## Turning hooks off
 
 `hooks/README.md` is the reference for `ECC_HOOK_PROFILE`,
