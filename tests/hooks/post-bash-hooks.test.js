@@ -144,6 +144,21 @@ if (test('stderr contains PR URL when using real tool_response shape (no tool_ou
   assert.ok(result.stderr.includes('gh pr review 42'), 'stderr should contain review command');
 })) passed++; else failed++;
 
+if (test('stderr contains PR URL when tool_response is a bare string', () => {
+  // Claude Code can render a Bash tool_response as a plain string (e.g.
+  // 'Error: Exit code N\n<output>') when the command exits non-zero, not
+  // just the {stdout,stderr} object shape used on a clean success.
+  const input = JSON.stringify({
+    tool_input: { command: 'gh pr create --title "Fix bug" --body "desc"' },
+    tool_response: 'https://github.com/owner/repo/pull/42\nwarning: partial output'
+  });
+  const result = runScript(prCreatedScript, input);
+  assert.strictEqual(result.status, 0, 'Should exit with code 0');
+  assert.ok(result.stderr.includes('https://github.com/owner/repo/pull/42'), `stderr should contain PR URL, got: ${result.stderr}`);
+  assert.ok(result.stderr.includes('[Hook] PR created:'), 'stderr should contain PR created message');
+  assert.ok(result.stderr.includes('gh pr review 42'), 'stderr should contain review command');
+})) passed++; else failed++;
+
 if (test('stderr contains correct repo in review command', () => {
   const input = JSON.stringify({
     tool_input: { command: 'gh pr create' },
