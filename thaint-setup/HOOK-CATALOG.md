@@ -223,6 +223,64 @@ All three were also present, unfixed, on `upstream/main` — not fork-specific.
 Each fix has a test built from the real payload shape, confirmed red against
 the pre-fix code and green after.
 
+## Fixed: consolidated PreToolUse chain regressions
+
+A `/review-pr` pass (code-reviewer, comment-analyzer, pr-test-analyzer,
+silent-failure-hunter, type-design-analyzer, code-simplifier, run in parallel
+against the full PR diff) found four more real regressions introduced by the
+hook-consolidation work (`pretooluse-hook-runner.js`,
+`edit-write-hook-dispatcher.js`, `pre-edit-write-dispatcher.js`,
+`bash-hook-dispatcher.js`) — all confirmed by at least one specialized agent
+plus direct verification, then fixed:
+
+- **Fail-open on a crash in a hard-denial-capable hook.** `runHooks()` caught
+  any member exception and silently continued the chain, applying the same
+  fail-open policy to `config-protection`/`gateguard-fact-force` as to
+  advisory-only members. `gateguard-fact-force.js`'s MultiEdit branch has no
+  guard beyond the initial `JSON.parse`, so a malformed `tool_input.edits`
+  throws — and the crash silently disabled the gate instead of denying, with
+  no signal reaching the model (the error only ever reached `stderr` on a
+  non-blocking exit, the same debug-log-only channel documented above). Fixed:
+  `config-protection`/`gateguard-fact-force` are now marked `critical: true`;
+  a critical member's crash denies immediately (`exitCode 2`, which Claude
+  Code does feed back to the model) instead of falling through.
+- **`ECC_DRY_RUN` silently stopped working for two hooks.** `config-protection`
+  and `gateguard-fact-force` used to run through `run-with-flags.js`, which
+  checks `isDryRun()` and substitutes a stderr preview instead of executing.
+  The consolidated route never referenced `ECC_DRY_RUN` anywhere, so both
+  hooks always ran for real under `ECC_DRY_RUN=1`. Fixed: `runHooks()` now
+  previews every enabled member under `ECC_DRY_RUN=1` and runs none of them.
+- **Truncation safety untested on the live route.** `hooks.json` now registers
+  `pre-edit-write-dispatcher.js` directly (the old separate entries pointing
+  at `run-with-flags.js` were removed), but no test spawned this real entry
+  point with an actual >1MB stdin payload — only the dead `run-with-flags.js`
+  route and a mock-level unit test covered it. Fixed: added an end-to-end test
+  spawning the real dispatcher with an oversized payload against a protected
+  config file; confirmed it catches a regression (temporarily broke the
+  truncation flag, saw it go red, restored).
+- **`post-bash-pr-created.js` missed the string-shaped `tool_response`.** Its
+  fix above only handled `tool_response` as an object with `.stdout`. Claude
+  Code can also render a Bash `tool_response` as a bare string (e.g.
+  `"Error: Exit code N\n..."`) when the command exits non-zero — confirmed
+  directly from this session's own transcript (33 such occurrences observed).
+  Fixed to check the string shape first, same pattern `mcp-health-check.js`
+  already used.
+
+Two lower-severity items from the same review were also addressed:
+`bash-hook-dispatcher.js` had its own byte-identical copy of
+`normalizeHookResult`/`runHooks` instead of sharing `pretooluse-hook-runner.js`
+(the only difference, `isJsonDeny()`, was safe only because
+`gateguard-fact-force` happens to be last in `PRE_BASH_HOOKS` — now shared,
+plus a runtime assertion enforces that ordering instead of leaving it as a
+comment); and `suggest-compact.js`'s new `run()` had no test proving its
+advisory message actually surfaces through the consolidated dispatcher (now
+covered end-to-end).
+
+The PR body/title were also stale — claimed "docs-only, no upstream-tracked
+file touched" and a test count of 3321 — while the branch touches
+`hooks/hooks.json`, 10 files under `scripts/`, and `CLAUDE.md`, and the real
+count (after all fixes above) is noted in the corrected PR description.
+
 ## Turning hooks off
 
 `hooks/README.md` is the reference for `ECC_HOOK_PROFILE`,
