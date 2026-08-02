@@ -1,11 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-const { isHookEnabled } = require('../lib/hook-flags');
-const {
-  buildPreToolUseAdditionalContext,
-  combineAdditionalContext,
-} = require('./pretooluse-visible-output');
+const { runHooks } = require('../lib/pretooluse-hook-runner');
 
 const { run: runBlockNoVerify } = require('./block-no-verify');
 const { run: runAutoTmuxDev } = require('./auto-tmux-dev');
@@ -51,6 +47,19 @@ const PRE_BASH_HOOKS = [
   },
 ];
 
+// gateguard-fact-force denies via a JSON hookSpecificOutput.permissionDecision
+// payload at exitCode 0 (not a non-zero exit), which only pretooluse-hook-
+// runner.js's runHooks() detects via isJsonDeny(). That detection only
+// matters if a later member could receive the deny JSON as if it were the
+// original tool-input event — i.e. only if gateguard-fact-force is NOT last.
+// Enforce that invariant structurally instead of leaving it as a comment.
+const gateguardIndex = PRE_BASH_HOOKS.findIndex(hook => hook.id === 'pre:bash:gateguard-fact-force');
+if (gateguardIndex !== -1 && gateguardIndex !== PRE_BASH_HOOKS.length - 1) {
+  throw new Error(
+    'pre:bash:gateguard-fact-force must be the last entry in PRE_BASH_HOOKS: its JSON-deny-at-exitCode-0 payload would otherwise be handed to a later hook as if it were the original tool-input event.'
+  );
+}
+
 const POST_BASH_HOOKS = [
   {
     id: 'post:bash:command-log-audit',
@@ -85,92 +94,6 @@ function readStdinRaw() {
     process.stdin.on('end', () => resolve(raw));
     process.stdin.on('error', () => resolve(raw));
   });
-}
-
-function normalizeHookResult(previousRaw, output) {
-  if (typeof output === 'string' || Buffer.isBuffer(output)) {
-    return {
-      raw: String(output),
-      stderr: '',
-      exitCode: 0,
-    };
-  }
-
-  if (output && typeof output === 'object') {
-    const nextRaw = Object.prototype.hasOwnProperty.call(output, 'additionalContext')
-      ? previousRaw
-      : Object.prototype.hasOwnProperty.call(output, 'stdout')
-      ? String(output.stdout ?? '')
-      : !Number.isInteger(output.exitCode) || output.exitCode === 0
-        ? previousRaw
-        : '';
-
-    return {
-      raw: nextRaw,
-      stderr: typeof output.stderr === 'string' ? output.stderr : '',
-      additionalContext: output.additionalContext,
-      exitCode: Number.isInteger(output.exitCode) ? output.exitCode : 0,
-    };
-  }
-
-  return {
-    raw: previousRaw,
-    stderr: '',
-    exitCode: 0,
-  };
-}
-
-function runHooks(rawInput, hooks) {
-  let currentRaw = rawInput;
-  // Track whether a sub-hook deliberately produced stdout (a string or
-  // {stdout}) versus currentRaw still being the untouched input event.
-  // Echoing the unmodified input event back to stdout fails Claude Code's
-  // hook-output JSON schema validation ("(root): Invalid input"), so in the
-  // pass-through case we must emit nothing instead.
-  let rawModified = false;
-  let stderr = '';
-  let additionalContext = '';
-
-  for (const hook of hooks) {
-    if (!isHookEnabled(hook.id, { profiles: hook.profiles })) {
-      continue;
-    }
-
-    try {
-      const result = normalizeHookResult(currentRaw, hook.run(currentRaw));
-      if (result.raw !== currentRaw) {
-        rawModified = true;
-      }
-      currentRaw = result.raw;
-      if (result.stderr) {
-        stderr += result.stderr.endsWith('\n') ? result.stderr : `${result.stderr}\n`;
-      }
-      if (result.additionalContext) {
-        additionalContext = combineAdditionalContext(additionalContext, result.additionalContext);
-      }
-      if (result.exitCode !== 0) {
-        return {
-          output: rawModified ? currentRaw : '',
-          stderr,
-          additionalContext,
-          exitCode: result.exitCode,
-        };
-      }
-    } catch (error) {
-      stderr += `[Hook] ${hook.id} failed: ${error.message}\n`;
-    }
-  }
-
-  return {
-    output: additionalContext
-      ? buildPreToolUseAdditionalContext(additionalContext)
-      : rawModified
-        ? currentRaw
-        : '',
-    stderr,
-    additionalContext,
-    exitCode: 0,
-  };
 }
 
 function runPreBash(rawInput) {
