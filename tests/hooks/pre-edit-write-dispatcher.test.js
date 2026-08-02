@@ -360,6 +360,33 @@ function runTests() {
     }
   })) passed++; else failed++;
 
+  if (test('suggest-compact advisory fires through the live dispatcher on the allowed retry', () => {
+    const stateDir = freshStateDir();
+    const sessionId = freshSessionId('suggest-compact-live');
+    const filePath = path.join(stateDir, 'suggest-compact-target.js');
+    const env = {
+      GATEGUARD_STATE_DIR: stateDir,
+      CLAUDE_SESSION_ID: sessionId,
+      COMPACT_THRESHOLD: '1',
+    };
+    const input = { tool_name: 'Edit', tool_input: { file_path: filePath, old_string: 'a', new_string: 'b' } };
+
+    try {
+      const gating = runDispatcher(input, env); // burns first-touch deny; suggest-compact never runs here
+      assert.strictEqual(parseDeny(gating.stdout).permissionDecision, 'deny');
+
+      const allowed = runDispatcher(input, env);
+      assert.strictEqual(allowed.code, 0, `expected exit 0, got ${allowed.code}, stderr: ${allowed.stderr}`);
+      const parsed = JSON.parse(allowed.stdout);
+      const additionalContext = parsed.hookSpecificOutput && parsed.hookSpecificOutput.additionalContext;
+      assert.ok(additionalContext, `expected suggest-compact advisory to surface via the live dispatcher, got stdout: ${allowed.stdout}`);
+      assert.ok(/StrategicCompact/.test(additionalContext), `expected StrategicCompact tag, got: ${additionalContext}`);
+      assert.ok(/tool calls reached/.test(additionalContext), `expected tool-count threshold message, got: ${additionalContext}`);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  })) passed++; else failed++;
+
   console.log(`\nResults: Passed: ${passed}, Failed: ${failed}`);
   process.exit(failed > 0 ? 1 : 0);
 }
