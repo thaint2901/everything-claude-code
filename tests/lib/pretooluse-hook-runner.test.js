@@ -113,6 +113,28 @@ function runTests() {
     assert.ok(JSON.parse(result.output).hookSpecificOutput.additionalContext.includes('still-ran'));
   })) passed++; else failed++;
 
+  if (test('ECC_DRY_RUN=1 previews every enabled member and runs none of them', () => {
+    let ran = false;
+    process.env.ECC_DRY_RUN = '1';
+    try {
+      const hooks = [
+        { id: 'test:critical', critical: true, run: () => { ran = true; return { exitCode: 2 }; } },
+        { id: 'test:advisory', run: () => { ran = true; return { exitCode: 0 }; } },
+      ];
+      const rawInput = JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: '/tmp/x.js' } });
+      const result = runHooks(rawInput, hooks);
+      assert.strictEqual(ran, false, 'dry-run must not execute any member');
+      assert.strictEqual(result.exitCode, 0, 'dry-run must always allow (preview only)');
+      assert.strictEqual(result.output, '', 'dry-run must not modify the tool-input event');
+      assert.ok(result.stderr.includes('[DryRun]'), `expected dry-run preview, got: ${result.stderr}`);
+      assert.ok(result.stderr.includes('test:critical'), `expected critical member previewed, got: ${result.stderr}`);
+      assert.ok(result.stderr.includes('test:advisory'), `expected advisory member previewed, got: ${result.stderr}`);
+      assert.ok(result.stderr.includes('target=/tmp/x.js'), `expected target context in preview, got: ${result.stderr}`);
+    } finally {
+      delete process.env.ECC_DRY_RUN;
+    }
+  })) passed++; else failed++;
+
   if (test('a throwing CRITICAL member denies immediately (fail-closed), later members do not run', () => {
     let laterRan = false;
     const hooks = [

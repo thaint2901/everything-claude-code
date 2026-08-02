@@ -14,7 +14,7 @@
 
 'use strict';
 
-const { isHookEnabled } = require('./hook-flags');
+const { isHookEnabled, isDryRun } = require('./hook-flags');
 const {
   buildPreToolUseAdditionalContext,
   combineAdditionalContext,
@@ -93,7 +93,47 @@ function normalizeHookResult(previousRaw, output) {
  * @param {Array<{id: string, profiles?: string, critical?: boolean, run: Function}>} hooks
  * @param {object} [options] passed through as the second arg to each member's run()
  */
+function extractPreviewContext(raw) {
+  try {
+    const payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (payload && typeof payload === 'object') {
+      const input = payload.tool_input;
+      return {
+        tool: String(payload.tool_name || ''),
+        filePath: input && typeof input === 'object' ? String(input.file_path || input.path || '') : '',
+      };
+    }
+  } catch {
+    // best-effort preview context; ignore malformed input
+  }
+  return { tool: '', filePath: '' };
+}
+
+/**
+ * Under ECC_DRY_RUN=1, preview every enabled member instead of running any
+ * of them — mirrors run-with-flags.js's isDryRun() gate, which this chain
+ * bypasses entirely now that config-protection/gateguard-fact-force are
+ * folded behind this in-process runner instead of individual hooks.json
+ * entries routed through run-with-flags.js.
+ */
+function runDryRunPreview(rawInput, hooks) {
+  const ctx = extractPreviewContext(rawInput);
+  let stderr = '';
+  for (const hook of hooks) {
+    if (!isHookEnabled(hook.id, { profiles: hook.profiles })) continue;
+    stderr += `[DryRun] Hook "${hook.id}" would execute (enabled=true, profiles=${hook.profiles || 'default'})`;
+    if (ctx.tool) stderr += ` tool=${ctx.tool}`;
+    if (ctx.filePath) stderr += ` target=${ctx.filePath}`;
+    stderr += '\n';
+  }
+  return { output: '', stderr, additionalContext: '', exitCode: 0 };
+}
+
 function runHooks(rawInput, hooks, options = {}) {
+  if (isDryRun()) {
+    return runDryRunPreview(rawInput, hooks);
+  }
+
   let currentRaw = rawInput;
   let rawModified = false;
   let stderr = '';
