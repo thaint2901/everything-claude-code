@@ -135,6 +135,9 @@ function runTests() {
 
     const gateguardModule = require(gateguardPath);
     const originalRun = gateguardModule.run;
+    // Synthetic crash, mirroring the same caveat in
+    // pre-edit-write-dispatcher.test.js: proves the fail-closed mechanism
+    // engages on a throw, not that a specific realistic failure triggers one.
     gateguardModule.run = () => {
       throw new Error('simulated gateguard-fact-force failure');
     };

@@ -226,6 +226,10 @@ function runTests() {
 
     const configProtectionModule = require(configProtectionPath);
     const originalRun = configProtectionModule.run;
+    // Synthetic crash: config-protection.js already wraps its own risky
+    // calls in try/catch, so there is no known realistic input that makes
+    // it throw today. This proves the fail-closed mechanism works when a
+    // throw does happen, not that any specific future failure mode reaches it.
     configProtectionModule.run = () => {
       throw new Error('simulated config-protection failure');
     };

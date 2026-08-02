@@ -138,7 +138,11 @@ function runTests() {
   if (test('a throwing CRITICAL member denies immediately (fail-closed), later members do not run', () => {
     let laterRan = false;
     const hooks = [
-      { id: 'test:critical-throws', critical: true, run: () => { throw new Error('boom'); } },
+      // Generic mock hook, not a real member script — verifies the runner's
+    // own contract in isolation. Real-hook realism is covered by the
+    // dispatcher-level tests (pre-edit-write-dispatcher.test.js,
+    // bash-hook-dispatcher.test.js), which note the same synthetic-crash caveat.
+    { id: 'test:critical-throws', critical: true, run: () => { throw new Error('boom'); } },
       { id: 'test:later', run: () => { laterRan = true; return { exitCode: 0 }; } },
     ];
     const result = runHooks('{}', hooks);
