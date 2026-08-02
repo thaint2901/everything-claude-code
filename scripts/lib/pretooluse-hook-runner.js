@@ -2,14 +2,20 @@
 /**
  * Generic in-process runner for a chain of PreToolUse hook members.
  *
- * Structurally the same normalize/loop shape as bash-hook-dispatcher.js's
- * runHooks(), extracted so a second consolidated PreToolUse dispatcher (Edit/
- * Write/MultiEdit) can reuse it without duplicating the loop. bash-hook-
- * dispatcher.js is left untouched: its own PRE_BASH_HOOKS list always runs
- * gateguard-fact-force last, so it never needs the isJsonDeny() mid-chain
- * check below. This dispatcher's required order puts a hard-denial-capable
- * hook (gateguard-fact-force) BEFORE an advisory-only hook (doc-file-warning),
- * so a plain exitCode!==0 check is not enough to short-circuit correctly.
+ * Shared by both consolidated PreToolUse dispatchers: bash-hook-dispatcher.js
+ * (Bash) and edit-write-hook-dispatcher.js (Edit/Write/MultiEdit). Extracted
+ * here so neither duplicates the normalize/loop logic.
+ *
+ * The isJsonDeny() mid-chain check below matters whenever a hard-denial-
+ * capable hook (gateguard-fact-force) could be followed by another member
+ * that would otherwise receive its deny JSON as if it were the original
+ * tool-input event. edit-write-hook-dispatcher.js's required order puts
+ * gateguard-fact-force BEFORE an advisory-only hook (doc-file-warning), so a
+ * plain exitCode!==0 check would not be enough there. bash-hook-dispatcher.js
+ * keeps gateguard-fact-force last in PRE_BASH_HOOKS, which makes the check a
+ * no-op for Bash today — that ordering is enforced structurally (a load-time
+ * assertion in bash-hook-dispatcher.js throws if it's ever violated), not
+ * left as a comment-only invariant.
  */
 
 'use strict';
