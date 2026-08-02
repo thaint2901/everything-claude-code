@@ -171,7 +171,9 @@ live-confirmed, both undecided:
   correctly and suggests a `gh pr review` command, but only on `stderr`; async
   PostToolUse hooks in Claude Code do not feed `additionalContext` back into the
   live turn regardless, so this one was architecturally unable to reach the
-  model even before considering the stderr channel.
+  model even before considering the stderr channel. (The separate field-name
+  bug that used to make this hook a no-op entirely is fixed — see "Fixed:
+  payload field mismatches" below. This stderr/async visibility gap remains.)
 
 Every unregistered script above still has a passing test, which is why none of
 this surfaced: the tests prove the module works, not that it is wired.
@@ -181,6 +183,45 @@ its own checks. That advice is wrong twice: `--no-verify` skips git's hooks, not
 Claude Code's, so this hook still runs — and `pre:bash:block-no-verify`, in the
 same dispatcher, rejects the flag outright. The working bypass is
 `ECC_DISABLED_HOOKS=pre:bash:commit-quality`.
+
+## Fixed: payload field mismatches
+
+Three real, live bugs (not just stale comments) confirmed 2026-08-02 by
+grepping the installed Claude Code CLI binary's own strings for the actual
+hook payload shape and cross-checking against this session's own transcript,
+then fixed:
+
+- **`cost-tracker.js` inflated cost ~2.5-3x.** Claude Code writes one
+  transcript JSONL line per content block, so one API response (one
+  `message.id`) repeats the same `message.usage` across several lines;
+  `sumUsageFromTranscript` summed every line instead of once per id (verified
+  on a real session: 704 lines, 286 unique ids, $866.52 line-summed vs $332.62
+  deduped). Fixed by cherry-picking upstream's own fix (`536221cf`, already on
+  `upstream/main`, not yet in this fork's `main`).
+- **`mcp-health-check.js` never ran its own failure-handling branch.**
+  `main()` read `process.env.CLAUDE_HOOK_EVENT_NAME` to decide whether to call
+  `handlePreToolUse` or `handlePostToolUseFailure` — but Claude Code never
+  sets that env var (confirmed: zero occurrences anywhere in the installed CLI
+  binary). `eventName` always fell back to `'PreToolUse'`, so the
+  `post:mcp-health-check` registration (`PostToolUseFailure`) silently ran the
+  wrong branch every time — `handlePostToolUseFailure` was unreachable
+  regardless of matcher configuration. Every existing test injected
+  `CLAUDE_HOOK_EVENT_NAME` as an env var to pass, masking this — real Claude
+  Code never does that. Fixed by reading `input.hook_event_name` from the JSON
+  body first (the real field), env var as fallback.
+- **`mcp-health-check.js` and `post-bash-pr-created.js` read the wrong result
+  field.** Claude Code's real PostToolUse payload puts the Bash tool result
+  under `tool_response: {stdout, stderr, ...}` (confirmed from this session's
+  own transcript `toolUseResult` shape and from a literal string embedded in
+  the installed CLI binary: `"tool_response": { "success": true } // PostToolUse
+  only`). Both scripts read `tool_output.output`/`tool_output.stderr` — a field
+  name Claude Code does not send — so `failureSummary()` and the PR-URL regex
+  match ran against `undefined` every time. Fixed to read `tool_response`
+  first, keeping `tool_output` as a legacy fallback.
+
+All three were also present, unfixed, on `upstream/main` — not fork-specific.
+Each fix has a test built from the real payload shape, confirmed red against
+the pre-fix code and green after.
 
 ## Turning hooks off
 
