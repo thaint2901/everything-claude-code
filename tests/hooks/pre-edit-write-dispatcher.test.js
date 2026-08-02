@@ -157,6 +157,35 @@ function runTests() {
     }
   })) passed++; else failed++;
 
+  // --- ECC_DRY_RUN, end-to-end through the real live route ---
+  if (test('ECC_DRY_RUN=1 previews the real dispatcher process instead of running hooks for real', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-dry-run-dispatcher-'));
+    const configPath = path.join(tmpDir, '.eslintrc.js');
+    fs.writeFileSync(configPath, 'module.exports = {};');
+
+    try {
+      const rawInput = JSON.stringify({
+        tool_name: 'Write',
+        tool_input: { file_path: configPath, content: 'module.exports = { rules: {} };' },
+      });
+
+      // Contrast: without ECC_DRY_RUN, this same Write is a real
+      // config-protection block (exitCode 2) since configPath is a
+      // protected .eslintrc.js — proving dry-run genuinely changes the
+      // outcome, not just adds extra logging on top of a real run.
+      const real = runDispatcher(rawInput);
+      assert.strictEqual(real.code, 2, `expected the same input to really block without dry-run, got ${real.code}`);
+
+      const result = runDispatcher(rawInput, { ECC_DRY_RUN: '1' });
+      assert.strictEqual(result.code, 0, `expected dry-run to always allow (preview only), got ${result.code}`);
+      assert.ok(result.stderr.includes('[DryRun]'), `expected a dry-run preview, got: ${result.stderr}`);
+      assert.ok(result.stderr.includes('pre:config-protection'), `expected config-protection previewed, got: ${result.stderr}`);
+      assert.ok(result.stderr.includes('pre:edit-write:gateguard-fact-force'), `expected gateguard previewed, got: ${result.stderr}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  })) passed++; else failed++;
+
   // --- doc-file-warning: Write-only, disabled gateguard to isolate it ---
   if (test('doc-file-warning fires for Write of a denylisted name, not for Edit', () => {
     const stateDir = freshStateDir();
