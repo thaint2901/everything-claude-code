@@ -159,6 +159,50 @@ function runTests() {
     }
   })) passed++; else failed++;
 
+  if (test('assertGateguardLast throws if gateguard-fact-force is reordered before another hook', () => {
+    const { assertGateguardLast } = require('../../scripts/hooks/bash-hook-dispatcher');
+
+    assert.doesNotThrow(() => assertGateguardLast([
+      { id: 'pre:bash:block-no-verify' },
+      { id: 'pre:bash:gateguard-fact-force' },
+    ]), 'gateguard-fact-force last should be fine');
+
+    assert.throws(
+      () => assertGateguardLast([
+        { id: 'pre:bash:gateguard-fact-force' },
+        { id: 'pre:bash:block-no-verify' },
+      ]),
+      /must be the last entry in PRE_BASH_HOOKS/,
+      'reordering gateguard-fact-force before another hook must throw'
+    );
+
+    assert.doesNotThrow(() => assertGateguardLast([
+      { id: 'pre:bash:block-no-verify' },
+    ]), 'an array without gateguard-fact-force at all should be fine');
+  })) passed++; else failed++;
+
+  if (test('pre-bash-dispatcher.js denies destructive Bash via gateguard-fact-force (live route, not run-with-flags.js)', () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-gateguard-bash-live-'));
+    const sessionId = `gateguard-bash-live-${process.pid}-${Date.now()}`;
+    const env = { GATEGUARD_STATE_DIR: stateDir, CLAUDE_SESSION_ID: sessionId };
+    const input = { tool_name: 'Bash', tool_input: { command: 'rm -rf /important/data' } };
+
+    try {
+      const first = runScript(preDispatcher, input, env);
+      assert.strictEqual(first.status, 0, 'gateguard denies via JSON payload at exit 0, not a nonzero exit');
+      const output1 = parseHookOutput(first.stdout);
+      assert.strictEqual(output1.hookSpecificOutput.permissionDecision, 'deny', `expected first destructive Bash call to deny, got: ${first.stdout}`);
+
+      const second = runScript(preDispatcher, input, env);
+      assert.strictEqual(second.status, 0);
+      const output2 = second.stdout.trim() ? parseHookOutput(second.stdout) : null;
+      const stillDenied = output2 && output2.hookSpecificOutput && output2.hookSpecificOutput.permissionDecision === 'deny';
+      assert.ok(!stillDenied, `expected retry after facts presented to be allowed, got: ${second.stdout}`);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  })) passed++; else failed++;
+
   console.log(`\nResults: Passed: ${passed}, Failed: ${failed}`);
   process.exit(failed > 0 ? 1 : 0);
 }

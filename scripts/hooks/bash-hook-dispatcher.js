@@ -54,12 +54,18 @@ const PRE_BASH_HOOKS = [
 // matters if a later member could receive the deny JSON as if it were the
 // original tool-input event — i.e. only if gateguard-fact-force is NOT last.
 // Enforce that invariant structurally instead of leaving it as a comment.
-const gateguardIndex = PRE_BASH_HOOKS.findIndex(hook => hook.id === 'pre:bash:gateguard-fact-force');
-if (gateguardIndex !== -1 && gateguardIndex !== PRE_BASH_HOOKS.length - 1) {
-  throw new Error(
-    'pre:bash:gateguard-fact-force must be the last entry in PRE_BASH_HOOKS: its JSON-deny-at-exitCode-0 payload would otherwise be handed to a later hook as if it were the original tool-input event.'
-  );
+// Exported (not just called at load time) so a test can exercise it against
+// a deliberately-reordered array without needing to touch this file.
+function assertGateguardLast(hooks) {
+  const gateguardIndex = hooks.findIndex(hook => hook.id === 'pre:bash:gateguard-fact-force');
+  if (gateguardIndex !== -1 && gateguardIndex !== hooks.length - 1) {
+    throw new Error(
+      'pre:bash:gateguard-fact-force must be the last entry in PRE_BASH_HOOKS: its JSON-deny-at-exitCode-0 payload would otherwise be handed to a later hook as if it were the original tool-input event.'
+    );
+  }
 }
+
+assertGateguardLast(PRE_BASH_HOOKS);
 
 const POST_BASH_HOOKS = [
   {
@@ -132,4 +138,5 @@ module.exports = {
   POST_BASH_HOOKS,
   runPreBash,
   runPostBash,
+  assertGateguardLast,
 };
