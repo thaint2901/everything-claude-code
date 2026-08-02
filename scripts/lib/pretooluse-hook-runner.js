@@ -75,15 +75,22 @@ function normalizeHookResult(previousRaw, output) {
 /**
  * Run an ordered list of PreToolUse hook members in one process.
  *
- * Each entry: { id, profiles, run(rawInput, options) }. Per-member gating
- * via isHookEnabled() (ECC_HOOK_PROFILE / ECC_DISABLED_HOOKS) happens before
- * a member runs. A member that throws is contained — logged to stderr,
- * remaining members still run (fail-open). The first member that denies
- * (non-zero exitCode, OR a JSON hookSpecificOutput.permissionDecision ===
- * 'deny' payload at exitCode 0) short-circuits the chain immediately.
+ * Each entry: { id, profiles, critical?, run(rawInput, options) }. Per-member
+ * gating via isHookEnabled() (ECC_HOOK_PROFILE / ECC_DISABLED_HOOKS) happens
+ * before a member runs. The first member that denies (non-zero exitCode, OR a
+ * JSON hookSpecificOutput.permissionDecision === 'deny' payload at exitCode 0)
+ * short-circuits the chain immediately.
+ *
+ * A member that throws is contained. For an advisory-only member (no
+ * `critical` flag) this is fail-open — logged to stderr, remaining members
+ * still run. For a `critical: true` member (a hard-denial-capable check like
+ * config-protection or gateguard-fact-force), a throw instead fails closed:
+ * the chain denies immediately (exitCode 2) rather than silently skipping the
+ * check that couldn't run, because letting the operation through with no
+ * visible signal would be a silent security bypass.
  *
  * @param {string} rawInput
- * @param {Array<{id: string, profiles?: string, run: Function}>} hooks
+ * @param {Array<{id: string, profiles?: string, critical?: boolean, run: Function}>} hooks
  * @param {object} [options] passed through as the second arg to each member's run()
  */
 function runHooks(rawInput, hooks, options = {}) {
@@ -121,6 +128,15 @@ function runHooks(rawInput, hooks, options = {}) {
       }
     } catch (error) {
       stderr += `[Hook] ${hook.id} failed: ${error.message}\n`;
+      if (hook.critical) {
+        stderr += `[Hook] ${hook.id} is a security-relevant check; denying this operation because it could not run safely.\n`;
+        return {
+          output: rawModified ? currentRaw : '',
+          stderr,
+          additionalContext,
+          exitCode: 2,
+        };
+      }
     }
   }
 

@@ -163,7 +163,7 @@ function runTests() {
   })) passed++; else failed++;
 
   // --- fail-open containment: one member throwing does not block the rest ---
-  if (test('a throwing member is contained: remaining members still run (fail-open)', () => {
+  if (test('a throwing CRITICAL member (config-protection) fails closed: denies immediately, does not burn gateguard', () => {
     const configProtectionPath = require.resolve('../../scripts/hooks/config-protection');
     const dispatcherLibPath = require.resolve('../../scripts/hooks/edit-write-hook-dispatcher');
 
@@ -177,13 +177,11 @@ function runTests() {
     };
 
     const stateDir = freshStateDir();
-    const sessionId = freshSessionId('fail-open');
+    const sessionId = freshSessionId('fail-closed');
     try {
-      // Re-require the dispatcher module now, so its destructured
-      // `runConfigProtection` reference captures the throwing stub above.
       const { runPreEditWrite } = require(dispatcherLibPath);
 
-      const filePath = path.join(stateDir, 'fail-open-target.js');
+      const filePath = path.join(stateDir, 'fail-closed-target.js');
       process.env.GATEGUARD_STATE_DIR = stateDir;
       process.env.CLAUDE_SESSION_ID = sessionId;
       try {
@@ -192,20 +190,77 @@ function runTests() {
           tool_input: { file_path: filePath, old_string: 'a', new_string: 'b' },
         });
         const result = runPreEditWrite(rawInput, {});
-        // config-protection (member 1) threw; gateguard (member 2) is real
-        // and must still have run and denied the fresh file.
+        // config-protection (member 1, critical) threw — must deny immediately
+        // (exitCode 2), never reaching gateguard (member 2).
         assert.ok(result.stderr.includes('pre:config-protection'), `expected contained error in stderr, got: ${result.stderr}`);
         assert.ok(result.stderr.includes('simulated config-protection failure'), `expected error message in stderr, got: ${result.stderr}`);
-        assert.strictEqual(result.exitCode, 0, 'gateguard deny keeps exitCode 0');
-        const parsed = JSON.parse(result.output);
-        assert.strictEqual(parsed.hookSpecificOutput.permissionDecision, 'deny', `expected gateguard to still run and deny: ${result.output}`);
+        assert.ok(/denying this operation/.test(result.stderr), `expected fail-closed explanation in stderr, got: ${result.stderr}`);
+        assert.strictEqual(result.exitCode, 2, 'a critical member crash must deny (exitCode 2), not fail open');
       } finally {
         delete process.env.GATEGUARD_STATE_DIR;
         delete process.env.CLAUDE_SESSION_ID;
       }
+
+      // Prove gateguard never ran (its first-touch pass was not burned):
+      // restore config-protection and re-run the SAME file through the real
+      // dispatcher process — gateguard must still first-touch-deny it, not
+      // "already passed", because the crash never let the chain reach it.
+      configProtectionModule.run = originalRun;
+      delete require.cache[configProtectionPath];
+      delete require.cache[dispatcherLibPath];
+      const second = runDispatcher(
+        { tool_name: 'Edit', tool_input: { file_path: filePath, old_string: 'a', new_string: 'b' } },
+        { GATEGUARD_STATE_DIR: stateDir, CLAUDE_SESSION_ID: sessionId }
+      );
+      assert.strictEqual(second.code, 0, `expected exit 0 (real config-protection allows a plain .js file), got ${second.code}`);
+      const denied = parseDeny(second.stdout);
+      assert.strictEqual(denied.permissionDecision, 'deny', `gateguard should still first-touch-deny: never ran during the crash, got: ${second.stdout}`);
     } finally {
       configProtectionModule.run = originalRun;
       delete require.cache[configProtectionPath];
+      delete require.cache[dispatcherLibPath];
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  })) passed++; else failed++;
+
+  if (test('a throwing ADVISORY member (suggest-compact) still fails open: chain completes, allow', () => {
+    const gateguardPath = require.resolve('../../scripts/hooks/gateguard-fact-force');
+    const suggestCompactPath = require.resolve('../../scripts/hooks/suggest-compact');
+    const dispatcherLibPath = require.resolve('../../scripts/hooks/edit-write-hook-dispatcher');
+
+    delete require.cache[gateguardPath];
+    delete require.cache[suggestCompactPath];
+    delete require.cache[dispatcherLibPath];
+
+    const gateguardModule = require(gateguardPath);
+    const suggestCompactModule = require(suggestCompactPath);
+    const originalGateguardRun = gateguardModule.run;
+    const originalSuggestCompactRun = suggestCompactModule.run;
+    // Bypass gateguard (not the focus of this test) and make the advisory,
+    // non-critical suggest-compact member throw instead.
+    gateguardModule.run = rawInput => rawInput;
+    suggestCompactModule.run = () => {
+      throw new Error('simulated suggest-compact failure');
+    };
+
+    const stateDir = freshStateDir();
+    try {
+      const { runPreEditWrite } = require(dispatcherLibPath);
+
+      const filePath = path.join(stateDir, 'advisory-fail-open-target.js');
+      const rawInput = JSON.stringify({
+        tool_name: 'Edit',
+        tool_input: { file_path: filePath, old_string: 'a', new_string: 'b' },
+      });
+      const result = runPreEditWrite(rawInput, {});
+      assert.ok(result.stderr.includes('pre:edit-write:suggest-compact'), `expected contained error in stderr, got: ${result.stderr}`);
+      assert.ok(result.stderr.includes('simulated suggest-compact failure'), `expected error message in stderr, got: ${result.stderr}`);
+      assert.strictEqual(result.exitCode, 0, 'a non-critical member crash must still fail open (exitCode 0)');
+    } finally {
+      gateguardModule.run = originalGateguardRun;
+      suggestCompactModule.run = originalSuggestCompactRun;
+      delete require.cache[gateguardPath];
+      delete require.cache[suggestCompactPath];
       delete require.cache[dispatcherLibPath];
       fs.rmSync(stateDir, { recursive: true, force: true });
     }

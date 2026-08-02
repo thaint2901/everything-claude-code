@@ -113,6 +113,20 @@ function runTests() {
     assert.ok(JSON.parse(result.output).hookSpecificOutput.additionalContext.includes('still-ran'));
   })) passed++; else failed++;
 
+  if (test('a throwing CRITICAL member denies immediately (fail-closed), later members do not run', () => {
+    let laterRan = false;
+    const hooks = [
+      { id: 'test:critical-throws', critical: true, run: () => { throw new Error('boom'); } },
+      { id: 'test:later', run: () => { laterRan = true; return { exitCode: 0 }; } },
+    ];
+    const result = runHooks('{}', hooks);
+    assert.strictEqual(result.exitCode, 2, 'a critical member crash must deny, not fail open');
+    assert.strictEqual(laterRan, false, 'the chain must stop at the critical crash, not continue');
+    assert.ok(result.stderr.includes('test:critical-throws'));
+    assert.ok(result.stderr.includes('boom'));
+    assert.ok(/denying this operation/.test(result.stderr));
+  })) passed++; else failed++;
+
   if (test('ECC_DISABLED_HOOKS skips a member by id', () => {
     process.env.ECC_DISABLED_HOOKS = 'test:skip-me';
     let skippedRan = false;

@@ -6,10 +6,15 @@
  * in-process run, mirroring bash-hook-dispatcher.js's approach for Bash.
  *
  * Member order (hard denials first, advisory last; first deny short-circuits):
- *   1. config-protection      — deny (exitCode 2) modifying linter/formatter configs
- *   2. gateguard-fact-force   — deny (JSON permissionDecision) on first-touch files
+ *   1. config-protection      — deny (exitCode 2) modifying linter/formatter configs; critical
+ *   2. gateguard-fact-force   — deny (JSON permissionDecision) on first-touch files; critical
  *   3. doc-file-warning       — advisory only; Write-only (matches its old "Write" matcher)
  *   4. suggest-compact        — advisory only; Edit|Write only (matches its old matcher)
+ *
+ * config-protection and gateguard-fact-force are marked critical: true so that
+ * if either throws instead of returning normally, pretooluse-hook-runner.js's
+ * runHooks() denies the operation (exitCode 2) rather than silently letting it
+ * through — a crash in a hard-denial-capable check must not become an allow.
  *
  * config-protection runs before gateguard-fact-force so a protected config
  * file gets the hard deny without first burning gateguard's one-time
@@ -60,11 +65,13 @@ const EDIT_WRITE_HOOKS = [
   {
     id: 'pre:config-protection',
     profiles: 'standard,strict',
+    critical: true,
     run: (rawInput, options) => runConfigProtection(rawInput, options),
   },
   {
     id: 'pre:edit-write:gateguard-fact-force',
     profiles: 'standard,strict',
+    critical: true,
     run: rawInput => runGateGuard(rawInput),
   },
   {
