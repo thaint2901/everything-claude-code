@@ -43,6 +43,7 @@ const PRE_BASH_HOOKS = [
   {
     id: 'pre:bash:gateguard-fact-force',
     profiles: 'standard,strict',
+    critical: true,
     run: rawInput => runGateGuard(rawInput),
   },
 ];

@@ -126,6 +126,39 @@ function runTests() {
     assert.ok(result.stderr.includes('gh pr review 42 --repo owner/repo'));
   })) passed++; else failed++;
 
+  if (test('a throwing gateguard-fact-force fails closed in the Bash chain (critical: true)', () => {
+    const gateguardPath = require.resolve('../../scripts/hooks/gateguard-fact-force');
+    const dispatcherPath = require.resolve('../../scripts/hooks/bash-hook-dispatcher');
+
+    delete require.cache[gateguardPath];
+    delete require.cache[dispatcherPath];
+
+    const gateguardModule = require(gateguardPath);
+    const originalRun = gateguardModule.run;
+    gateguardModule.run = () => {
+      throw new Error('simulated gateguard-fact-force failure');
+    };
+
+    try {
+      const { runPreBash } = require(dispatcherPath);
+      const rawInput = JSON.stringify({ tool_input: { command: 'echo hi' } });
+      const result = runPreBash(rawInput);
+
+      // Before this fix, gateguard-fact-force had no `critical` flag in the
+      // Bash chain, so a crash here fell through to exitCode 0 (fail open) —
+      // the same class of silent security bypass fixed for Edit/Write in
+      // 9a9da355, just not applied to this dispatcher.
+      assert.ok(result.stderr.includes('pre:bash:gateguard-fact-force'), `expected contained error in stderr, got: ${result.stderr}`);
+      assert.ok(result.stderr.includes('simulated gateguard-fact-force failure'), `expected error message in stderr, got: ${result.stderr}`);
+      assert.ok(/denying this operation/.test(result.stderr), `expected fail-closed explanation in stderr, got: ${result.stderr}`);
+      assert.strictEqual(result.exitCode, 2, 'a critical member crash must deny (exitCode 2), not fail open');
+    } finally {
+      gateguardModule.run = originalRun;
+      delete require.cache[gateguardPath];
+      delete require.cache[dispatcherPath];
+    }
+  })) passed++; else failed++;
+
   console.log(`\nResults: Passed: ${passed}, Failed: ${failed}`);
   process.exit(failed > 0 ? 1 : 0);
 }
