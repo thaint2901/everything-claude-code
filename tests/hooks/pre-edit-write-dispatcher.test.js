@@ -132,6 +132,31 @@ function runTests() {
     }
   })) passed++; else failed++;
 
+  // --- truncation safety, end-to-end through the real live route ---
+  if (test('blocks a >1MB stdin payload targeting a protected config file (live route, not run-with-flags.js)', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-truncation-dispatcher-'));
+    const configPath = path.join(tmpDir, '.eslintrc.js');
+    fs.writeFileSync(configPath, 'module.exports = {};');
+
+    try {
+      const rawInput = JSON.stringify({
+        tool_name: 'Write',
+        tool_input: {
+          file_path: configPath,
+          content: 'x'.repeat(1024 * 1024 + 2048),
+        },
+      });
+
+      const result = runDispatcher(rawInput);
+      assert.strictEqual(result.code, 2, `expected truncated protected payload to be blocked, got ${result.code}`);
+      assert.strictEqual(result.stdout, '', 'blocked truncated payload should not echo raw input');
+      assert.ok(result.stderr.includes('Hook input exceeded 1048576 bytes'), `expected size warning, got: ${result.stderr}`);
+      assert.ok(result.stderr.includes('truncated payload'), `expected truncated payload warning, got: ${result.stderr}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  })) passed++; else failed++;
+
   // --- doc-file-warning: Write-only, disabled gateguard to isolate it ---
   if (test('doc-file-warning fires for Write of a denylisted name, not for Edit', () => {
     const stateDir = freshStateDir();
