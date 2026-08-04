@@ -55,3 +55,10 @@ post:bash:build-complete
 stop:evaluate-session
 # Writes nothing at all; only prints a stderr suggestion to look for
 # extractable patterns. Real extraction is the hand-run /learn command.
+
+stop:cost-tracker
+# LOCAL (thaint): on a Claude.ai subscription nothing is billed per token,
+# so the $ figures this computes are noise, not signal. ecc-context-monitor's
+# COST NOTICE/WARNING/CRITICAL reminders and the statusline's $ fallback both
+# read from this hook's output (via ecc-metrics-bridge), so disabling it here
+# silences both instead of patching each reader separately.
