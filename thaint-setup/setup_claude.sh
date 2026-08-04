@@ -73,7 +73,9 @@ End-to-end Claude Code setup. Installs (always overwrites) into ${CLAUDE_HOME}:
   claude-code CLI (if missing), skip-onboarding flag in ~/.claude.json,
   marketplace + plugin ${CLAUDE_PLUGIN} (if missing),
   agents, commands, hooks-runtime, configure-ecc, strategic-compact, telegram-hook,
-  ECC statusline (.statusLine; a hand-edited value is kept as-is)
+  ECC statusline (.statusLine; a hand-edited value is kept as-is),
+  this fork's hook-audit env defaults (ECC_DISABLED_HOOKS,
+  GATEGUARD_BASH_ROUTINE_DISABLED — only set if unset)
 Shell rc patch (.zshrc or .bashrc):
   alias clauded='claude --dangerously-skip-permissions'
   export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
@@ -373,6 +375,14 @@ patch_settings_telegram() {
 # install_telegram_hook.
 readonly GRAPH_EXEMPT='["insaits-security","telegram-notify"]'
 
+# This fork's hook-audit defaults (see thaint-setup/HOOK-CATALOG.md, "Turning
+# hooks off" — each id there has its own rationale: dead code, duplicate of
+# another hook, or an unfinished stub). Applied so a fresh install starts from
+# the same audited defaults instead of running every hook the upstream graph
+# ships.
+readonly ECC_DISABLED_HOOKS_DEFAULT="stop:desktop-notify,pre:bash:git-push-reminder,pre:observe,post:observe:continuous-learning,pre:governance-capture,post:governance-capture,post:edit:console-warn,post:session-activity-tracker,post:bash:command-log-audit,post:bash:command-log-cost,post:bash:build-complete,stop:evaluate-session"
+readonly GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT="1"
+
 # Wires hooks/hooks.json into settings.json, the only place Claude Code reads
 # hooks from. The ECC installer copies the hook scripts and writes the same graph
 # to ~/.claude/hooks/hooks.json, but deliberately leaves settings.json alone
@@ -475,6 +485,46 @@ install_hook_graph() {
     || die "jq failed to wire the hook graph into $settings"
   mv "$tmp" "$settings"
   log "wired hook graph ($(jq '[.hooks[][].hooks[]] | length' "$settings") entries in settings.json)"
+}
+
+# Applies this fork's hook-audit defaults (ECC_DISABLED_HOOKS,
+# GATEGUARD_BASH_ROUTINE_DISABLED) to settings.json's env block. Only sets a
+# key that is absent — an existing value is assumed to be a deliberate choice
+# (yours, or a previous run's) and is left alone, same as the statusLine
+# hand-edit check below.
+ensure_ecc_hook_config() {
+  local settings="${CLAUDE_HOME}/settings.json"
+
+  if (( DRY_RUN )); then
+    printf '[dry-run] patch %s (env.ECC_DISABLED_HOOKS, env.GATEGUARD_BASH_ROUTINE_DISABLED — only if unset)\n' "$settings"
+    return
+  fi
+
+  [[ -f "$settings" ]] || printf '{}\n' > "$settings"
+
+  local existing_disabled existing_gateguard
+  existing_disabled="$(jq -r '.env.ECC_DISABLED_HOOKS // ""' "$settings")"
+  existing_gateguard="$(jq -r '.env.GATEGUARD_BASH_ROUTINE_DISABLED // ""' "$settings")"
+
+  if [[ -n "$existing_disabled" && "$existing_disabled" != "$ECC_DISABLED_HOOKS_DEFAULT" ]]; then
+    warn "env.ECC_DISABLED_HOOKS already set to a different value — keeping it (see thaint-setup/HOOK-CATALOG.md for this fork's defaults)"
+  fi
+  if [[ -n "$existing_gateguard" && "$existing_gateguard" != "$GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT" ]]; then
+    warn "env.GATEGUARD_BASH_ROUTINE_DISABLED already set to a different value — keeping it"
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  jq \
+    --arg disabled "$ECC_DISABLED_HOOKS_DEFAULT" \
+    --arg gateguard "$GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT" \
+    '.env //= {}
+     | .env.ECC_DISABLED_HOOKS = (.env.ECC_DISABLED_HOOKS // $disabled)
+     | .env.GATEGUARD_BASH_ROUTINE_DISABLED = (.env.GATEGUARD_BASH_ROUTINE_DISABLED // $gateguard)' \
+    "$settings" > "$tmp" \
+    || die "jq failed to patch hook-audit env defaults in $settings"
+  mv "$tmp" "$settings"
+  log "applied hook-audit env defaults (ECC_DISABLED_HOOKS, GATEGUARD_BASH_ROUTINE_DISABLED) where unset"
 }
 
 # Installs ECC's statusline, which shows more than the inline bash bar it
@@ -896,6 +946,7 @@ main() {
   install_hooks_runtime
   # Both need install_hooks_runtime to have copied the scripts they point at.
   install_hook_graph
+  ensure_ecc_hook_config
   patch_settings_statusline
   install_telegram_hook
   patch_shell_rc
