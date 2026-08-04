@@ -499,6 +499,12 @@ install_hook_graph() {
   log "wired hook graph ($(jq '[.hooks[][].hooks[]] | length' "$settings") entries in settings.json)"
 }
 
+# Splits a comma-separated hook-id list into a sorted, deduped, comma-joined
+# form so two lists differing only in order/duplicates compare as equal.
+normalize_hook_list() {
+  printf '%s' "$1" | tr ',' '\n' | sort -u | paste -sd, -
+}
+
 # Applies this fork's hook-audit defaults (ECC_DISABLED_HOOKS,
 # GATEGUARD_BASH_ROUTINE_DISABLED) to settings.json's env block. Only sets a
 # key that is absent — an existing value is assumed to be a deliberate choice
@@ -518,7 +524,12 @@ ensure_ecc_hook_config() {
   existing_disabled="$(jq -r '.env.ECC_DISABLED_HOOKS // ""' "$settings")"
   existing_gateguard="$(jq -r '.env.GATEGUARD_BASH_ROUTINE_DISABLED // ""' "$settings")"
 
-  if [[ -n "$existing_disabled" && "$existing_disabled" != "$ECC_DISABLED_HOOKS_DEFAULT" ]]; then
+  # Compared as normalized sets, not raw strings: the actual runtime behavior
+  # (hook-flags.js's getDisabledHookIds() splits on `,` into a Set) never
+  # depends on order, so a pure reorder of disabled-hooks.txt must not warn
+  # every existing install about a "different value" that changes nothing.
+  if [[ -n "$existing_disabled" \
+        && "$(normalize_hook_list "$existing_disabled")" != "$(normalize_hook_list "$ECC_DISABLED_HOOKS_DEFAULT")" ]]; then
     warn "env.ECC_DISABLED_HOOKS already set to a different value — keeping it (see thaint-setup/HOOK-CATALOG.md for this fork's defaults)"
   fi
   if [[ -n "$existing_gateguard" && "$existing_gateguard" != "$GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT" ]]; then

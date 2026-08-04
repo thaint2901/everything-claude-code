@@ -179,6 +179,32 @@ function runTests() {
   else failed++;
 
   console.log(`\nResults: ${passed} passed, ${failed} failed\n`);
+
+  // --- Fix 2 regression: reordering disabled-hooks.txt must not warn -------
+  if (
+    test('does not warn when existing ECC_DISABLED_HOOKS is the default reordered', () => {
+      const reordered = DEFAULT_DISABLED.split(',').reverse().join(',');
+      const r = runConfig({ existingSettings: { env: { ECC_DISABLED_HOOKS: reordered } } });
+      assert.strictEqual(r.status, 0, `exit ${r.status}: ${r.stderr}`);
+      assert.ok(!r.stderr.includes('already set to a different value'), `unexpected warning: ${r.stderr}`);
+      assert.strictEqual(r.settings.env.ECC_DISABLED_HOOKS, reordered, 'existing (reordered) value must survive unchanged');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('still warns when the existing hook set is genuinely different, not just reordered', () => {
+      const swapped = DEFAULT_DISABLED.split(',').slice(1).concat('pre:bash:some-other-hook').join(',');
+      const r = runConfig({ existingSettings: { env: { ECC_DISABLED_HOOKS: swapped } } });
+      assert.strictEqual(r.status, 0, `exit ${r.status}: ${r.stderr}`);
+      assert.ok(r.stderr.includes('already set to a different value'), `expected a warning, got: ${r.stderr}`);
+    })
+  )
+    passed++;
+  else failed++;
+
+  console.log(`\nResults: ${passed} passed, ${failed} failed\n`);
   return { passed, failed };
 }
 
