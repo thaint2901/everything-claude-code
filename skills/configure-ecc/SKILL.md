@@ -1,6 +1,6 @@
 ---
 name: configure-ecc
-description: Assess which ECC skills and rules a specific repository actually needs — evidence-based shortlist with reasons for what was excluded — then install the shortlist and tailor it to the project.
+description: Assess which ECC skills and rules a specific repository actually needs — an evidence-based shortlist with a stated reason for every exclusion — then install that shortlist and tailor it to the project. Use this skill whenever the user mentions configuring, installing, or setting up ECC or everything-claude-code, wants to decide which skills or rules are worth adding to a repository, or wants to re-assess, trim, or repair an existing ECC installation — even when they only say something like "set up claude code for this repo" without naming ECC.
 metadata:
   origin: ECC
 ---
@@ -34,6 +34,18 @@ This skill owns the two things `/project-init` does not do:
    Python but has no web layer, so `fastapi-patterns` is noise here."
 2. **Tailoring** — editing installed files down to what this project actually uses.
 
+## How It Works
+
+Three phases, in this order, because each one makes the next affordable:
+
+1. **Eliminate by bundle** — one cheap question per thematic bundle. A bundle that
+   fails takes all of its skills out of scope at once.
+2. **Select by evidence** — inside surviving bundles only, judge each skill against a
+   concrete signal in the repository.
+3. **Confirm by refutation** — try to break each recommendation before presenting it.
+
+A skill is recommended only if it survives all three.
+
 ## Prerequisites
 
 This skill must be accessible to Claude Code before activation. Two ways to bootstrap:
@@ -45,21 +57,40 @@ This skill must be accessible to Claude Code before activation. Two ways to boot
 
 ## Step 0: Locate the ECC Source
 
-Prefer a checkout the user already has. Cloning a remote is the fallback, never the default.
+Prefer a checkout the user already has. Cloning a remote is the fallback, never the
+default — on a fork, cloning upstream silently installs code the user is not running,
+which `commands/project-init.md` already forbids.
+
+Use the resolver this repo already ships rather than a fresh guess:
 
 ```bash
-# 1. Running inside the ECC repo itself?
-git rev-parse --show-toplevel 2>/dev/null
+# 1. Claude Code exports this when ECC runs as a plugin.
+ECC_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 
-# 2. Installed as a plugin? Use the plugin root.
-# 3. Only if neither is available, and only after telling the user:
-git clone https://github.com/affaan-m/everything-claude-code.git /tmp/everything-claude-code
+# 2. Otherwise ask resolve-ecc-root.js, which walks
+#    env var -> standard install -> known plugin roots -> plugin cache.
+[ -n "$ECC_ROOT" ] || ECC_ROOT=$(node -e \
+  'try{console.log(require(require("os").homedir()+"/.claude/scripts/lib/resolve-ecc-root").resolveEccRoot())}catch(e){}' \
+  2>/dev/null)
+
+# 3. Last resort: the repository the user is standing in.
+[ -n "$ECC_ROOT" ] || ECC_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 ```
 
-Set `ECC_ROOT` to whichever source was found.
+Then verify the tree really is ECC. This check matters more than it looks: `git
+rev-parse` succeeds in *any* git repository, so without it `ECC_ROOT` can point at the
+user's own unrelated project, and the mistake surfaces several steps later as a
+confusing "module not found" rather than as the source-detection failure it is.
 
-If the user is on a fork, the local checkout is the correct source — cloning upstream
-would silently install code they are not running. Ask before cloning anything.
+```bash
+for f in scripts/install-plan.js manifests/install-modules.json skills; do
+  [ -e "$ECC_ROOT/$f" ] || { echo "Not an ECC tree: $ECC_ROOT (missing $f)"; exit 1; }
+done
+```
+
+If every option fails, say so and ask the user for a path. Clone
+`https://github.com/affaan-m/everything-claude-code.git` only with explicit
+consent, and `rm -rf` that clone once the install is done.
 
 ---
 
@@ -69,25 +100,82 @@ would silently install code they are not running. Ask before cloning anything.
 node "$ECC_ROOT/scripts/install-plan.js" --list-components --family skill --json
 ```
 
-**Never hardcode a skill list in this file.** Any list written here is stale the moment
-a skill is added, and a hardcoded list silently shrinks the candidate set — an
-assessment that can only see a fraction of the candidates is not an assessment.
+If this exits non-zero or prints nothing, stop and report the error. Continuing with an
+empty candidate set is worse than failing, because a failed lookup and a repository that
+genuinely needs nothing both render as "Recommended (0)" — the user has no way to tell
+which one happened.
 
-The same applies to rules: enumerate `$ECC_ROOT/rules/*/` at runtime rather than naming
-languages here.
+Never hardcode a skill list in this file. Any list written here is stale the moment a
+skill is added, and a hardcoded list silently shrinks the candidate set — an assessment
+that can only see a fraction of the candidates is not an assessment.
 
 ---
 
-## Step 2: Enrich Each Candidate
+## Step 2: Eliminate by Bundle
 
-The manifest alone is not enough to judge a skill. Each component carries only
-`id`, `family`, `description`, `moduleIds`, `moduleCount`, and `targets`. Join two more
-signals before assessing:
+Judging every candidate individually is unaffordable and unnecessary. Most of the
+catalogue can be ruled out in one pass.
+
+Read `$ECC_ROOT/manifests/install-modules.json`. Modules whose `id` does **not** start
+with `skill-` are the thematic bundles; each one's `paths` globs name the skills it
+owns. Ask one cheap question per bundle — "does this repository touch this area at
+all?" — answered from a file listing, package manifests, and CI config.
+
+One negative answer removes every skill in that bundle. This is where the cost of the
+assessment is actually controlled.
+
+Eliminate aggressively, because the costs are asymmetric: a wrongly excluded bundle
+costs one follow-up sentence from the user, while a wrongly included one costs context
+on every session, indefinitely.
+
+Two reconciliation rules:
+
+- A handful of skills belong to no thematic bundle. Reconcile the surviving set against
+  the full list from Step 1 so bundle sweeping never becomes the only path in.
+- Record which bundles were eliminated and on what evidence. That list goes in the
+  report — it is most of the "deliberately excluded" section.
+
+Bundles that survive but that the repository cannot speak to at all — business,
+content, industry domains — are neither eliminated nor assessed. They go to Step 6 as a
+single question each.
+
+---
+
+## Step 3: Select by Evidence
+
+Only for skills inside surviving bundles.
+
+Run `/project-init --dry-run` and keep its detected-stack evidence and resolved plan.
+Cross-reference `$ECC_ROOT/config/project-stack-mappings.json`, which maps project
+indicator files to ECC skills, rules, hooks, and commands. It covers a minority of the
+catalogue, so treat a hit as a shortcut and its absence as no signal either way.
+
+Then go past what the mapping can express, by reading the repo:
+
+- Which of the mapped frameworks are actually used, versus merely present as a transitive dependency?
+- Does the repo have the layer a skill assumes — a web layer, a DB layer, a CI pipeline, a UI?
+- Does an existing `CLAUDE.md`, `.claude/rules/`, or house style already cover what a skill would add?
+- What do the test and build scripts say about how this team actually works?
+
+Every recommendation must carry a falsifiable claim — a file and line someone can
+re-check, not an impression. "Looks like a React project" is not evidence;
+"`package.json:14` depends on `react@19`" is. The point is not formality: a claim
+nobody can check is a claim nobody can correct, and this report is meant to be argued
+with. A recommendation with no such claim is not a weak recommendation, it is an
+exclusion.
+
+Do not ask the user what their stack is. The repository answers that, and asking
+signals the assessment was skipped.
+
+Enrich each surviving candidate with two signals the manifest carries but the component
+record does not:
 
 **Provenance** — read `metadata.origin` from `$ECC_ROOT/skills/<id>/SKILL.md`. Values in
-use include `ECC` (first-party), `community`, vendor or individual contributors, and a
-number of skills that declare no origin at all. A first-party skill and a single-vendor
-domain skill should not be presented as equivalent recommendations.
+use include `ECC` (first-party), `community`, and vendor or individual contributors. Many
+skills declare no origin at all: report those as `unknown`. Resist the pull to default a
+missing origin to `ECC` — the file living inside the ECC repo says nothing about who
+wrote it, and a first-party skill and a single-vendor domain skill must not reach the
+user as equivalent recommendations.
 
 **Maturity** — read `stability` from the module that owns the skill in
 `$ECC_ROOT/manifests/install-modules.json`. Values are `stable` and `beta`. Flag `beta`
@@ -102,34 +190,41 @@ exhaustive. The one case this currently catches is `continuous-learning`, supers
 
 ---
 
-## Step 3: Gather Evidence From the Repository
+## Step 4: Assess Rules
 
-Run `/project-init --dry-run` and keep its detected-stack evidence and resolved plan.
+Rules are assessed separately because the data behind them is thinner. Enumerate
+`$ECC_ROOT/rules/*/` at runtime rather than naming languages here.
 
-Cross-reference `$ECC_ROOT/config/project-stack-mappings.json`, which maps project
-indicator files to ECC skills, rules, hooks, and commands.
+Rules have no manifest components, no bundles, no `origin`, and no `stability` — the
+whole tree installs as one module. Leave those columns blank in the report rather than
+inferring values that do not exist.
 
-Then go past what the mapping can express, by reading the repo:
+What rules do have is the easiest evidence in this skill: the directory name is the
+signal. `rules/python/` is justified by a `pyproject.toml`, not by a judgement call.
+Apply the same standard as Step 3 — name the indicator file — and the rest follows.
 
-- Which of the mapped frameworks are actually used, versus merely present as a transitive dependency?
-- Does the repo have the layer a skill assumes — a web layer, a DB layer, a CI pipeline, a UI?
-- Does an existing `CLAUDE.md`, `.claude/rules/`, or house style already cover what a skill would add?
-- What do the test and build scripts say about how this team actually works?
-
-**Do not ask the user what their stack is.** The repository answers that, and asking
-signals the assessment was skipped.
+Language rules extend the common set. If the assessment selects a language without
+`common`, say so and recommend adding it.
 
 ---
 
-## Step 4: Assess Against a Budget
+## Step 5: Confirm by Refutation
 
-Every installed skill costs context on every session. Treat the shortlist as
-budget-constrained, not as "select everything that might apply".
+Before presenting anything, try to break it. Take each recommendation's claim **on its
+own**, without the reasoning that produced it, and look for the reason it is wrong:
 
-For each candidate, record: the evidence found, the recommendation, and the reason.
-Recommend a skill only when a concrete signal in the repo supports it. "The project is
-Python" justifies `python-patterns`; it does not justify every skill in the Python
-ecosystem.
+- Is the indicator file real, at that path, saying what was claimed?
+- Is the dependency actually used, or only declared?
+- Does the repo already solve this, making the skill redundant rather than useful?
+
+Drop anything that does not survive. Separating the claim from its reasoning is the
+whole point: a model re-reading its own argument tends to find it convincing, so a
+verification pass that looks for support adds confidence without adding correctness.
+Looking for the refutation is what makes the check worth running.
+
+Treat every recommendation as budget-constrained, not as "select everything that might
+apply". "The project is Python" justifies `python-patterns`; it does not justify every
+skill in the Python ecosystem.
 
 Compose with the skills that already measure this rather than reinventing them:
 
@@ -141,21 +236,24 @@ whose supporting evidence has disappeared, not just additions.
 
 ---
 
-## Step 5: Report the Assessment
+## Step 6: Report the Assessment
 
-Present the assessment **before** installing anything:
+Present the assessment **before** installing anything, using this structure:
 
 ```text
 ## ECC Assessment — <repo>
 
 ### Detected evidence
-- <signal> -> <what it implies>
+- <signal at file:line> -> <what it implies>
 
 ### Recommended (N)
-| Skill | Origin | Maturity | Evidence | Why |
+| Skill | Origin | Maturity | Evidence (file:line) | Why |
 
 ### Deliberately excluded (M)
-| Skill / group | Why not |
+| Skill / bundle | Why not |
+
+### The repository cannot answer these
+- <bundle> — <the one question to ask the user>
 
 ### Not assessed
 - <anything the available data could not judge, including the legacy-detection gap>
@@ -164,13 +262,13 @@ Present the assessment **before** installing anything:
 The excluded table is not filler. It is the record that a decision was made, and it is
 what makes the next run a diff instead of a fresh guess.
 
-Then use `AskUserQuestion` to confirm the shortlist. Ask about the shortlist, never
-enumerate the full candidate set — it will not fit, and presenting it defeats the point
-of assessing.
+Ask the user only about the bundles in the third section — one question each, not one
+per skill. Then use `AskUserQuestion` to confirm the shortlist. Never enumerate the full
+candidate set: it will not fit, and presenting it defeats the point of assessing.
 
 ---
 
-## Step 6: Choose Installation Level
+## Step 7: Choose Installation Level
 
 Use `AskUserQuestion`:
 
@@ -194,7 +292,7 @@ mkdir -p $TARGET/skills $TARGET/rules
 
 ---
 
-## Step 7: Install the Shortlist
+## Step 8: Install the Shortlist
 
 For each approved skill, copy the entire skill directory from the correct source root:
 
@@ -213,6 +311,10 @@ directly to `cp`. Use the directory path as the destination name explicitly:
 cp -R "${src%/}" "$TARGET/skills/$(basename "${src%/}")"
 ```
 
+Check the exit status of every copy and surface a failure immediately. A skill that
+silently failed to copy is worse than one that was never selected, because the report
+will go on to claim it is installed.
+
 Copy the whole directory, not just `SKILL.md` — several skills ship `config.json`,
 hooks, or scripts alongside it (`continuous-learning`, `continuous-learning-v2`).
 
@@ -223,15 +325,23 @@ cp -r "$ECC_ROOT/rules/common" "$TARGET/rules/common"
 cp -r "$ECC_ROOT/rules/<language>" "$TARGET/rules/<language>"
 ```
 
-Language rules extend the common set. If the assessment selected a language without
-`common`, say so and recommend adding it.
-
 ---
 
-## Step 8: Verify the Installation
+## Step 9: Verify the Installation
+
+Start by reconciling what is on disk against what was approved in Step 6:
 
 ```bash
 ls -la $TARGET/skills/ $TARGET/rules/
+```
+
+Count and diff — do not just look. Every approved item must be present. This ordering
+matters because an empty directory reads identically to a clean bill of health under
+the grep checks below: `grep` finding nothing and `grep` having nothing to search
+produce the same output. A partial install must be reported as an install failure, not
+as an absence of issues.
+
+```bash
 grep -rn "~/.claude/" $TARGET/skills/ $TARGET/rules/
 grep -rn "../common/" $TARGET/rules/
 ```
@@ -242,16 +352,18 @@ grep -rn "../common/" $TARGET/rules/
 - `~/.claude/skills/` or `~/.claude/rules/` — may be broken at project level
 - A skill referencing another skill by name — check the referenced skill was installed
 
-Cross-references to check, rather than assume: a `*-tdd` or `*-testing` skill usually
-expects its matching `*-patterns` skill; `continuous-learning-v2` expects the user-level
-`~/.claude/homunculus/` directory; language rules reference their `common/` counterparts.
-Verify these against the files actually installed instead of a list written here.
+Derive cross-references instead of assuming them: grep the installed files for the names
+of other candidates from Step 1, and report any hit that was not installed. A `*-tdd` or
+`*-testing` skill usually expects its matching `*-patterns` skill, and
+`continuous-learning-v2` expects the user-level `~/.claude/homunculus/` directory — but
+find those by looking, since a dependency list written here goes stale exactly like a
+hardcoded skill list does.
 
 Report each issue as file, line, what is wrong, and the suggested fix.
 
 ---
 
-## Step 9: Tailor the Installed Files
+## Step 10: Tailor the Installed Files
 
 This is where the assessment becomes concrete changes. Use `AskUserQuestion`:
 
@@ -272,16 +384,39 @@ at `$ECC_ROOT/`.
 
 ---
 
-## Step 10: Record the Decision
+## Step 11: Record the Decision
 
 Write the assessment — selected, excluded, and the reason for each — somewhere durable
-in the project, so the next run diffs against it instead of starting over.
+in the project, so the next run diffs against it instead of starting over. Record the
+**checks that were run**, not only the conclusions: which files were opened and what was
+searched for. That is what turns the next run into a diff ("no React last time, React
+now") rather than a fresh guess.
 
 If the project keeps an `ecc-install.json`, keep it consistent with what was installed;
 `/project-init --config ecc-install.json` can then reproduce the install.
 
 Print a summary: install level and path, what was installed, what was excluded and why,
 verification issues found and fixed, and the tailoring applied.
+
+---
+
+## Examples
+
+**A Django API with no frontend.** `pyproject.toml` and `manage.py` are present, no
+`package.json`. The frontend, JVM, Swift, and mobile bundles are eliminated in Step 2
+without reading a single skill. `django-patterns` and `django-tdd` are recommended on
+`manage.py:1` and a `pytest.ini`; `django-security` is recommended because
+`settings.py` exposes `DEBUG` from the environment. `frontend-patterns` is excluded, and
+the report says so rather than staying silent. `rules/python/` and `rules/common/`
+follow from `pyproject.toml`.
+
+**A repo that is already configured.** Step 2 finds the same bundles alive as last time
+except one: the `.github/workflows/` directory is gone. The report leads with a removal
+recommendation, not an install list.
+
+**A failed lookup.** `install-plan.js` exits non-zero because `ECC_ROOT` points at a
+tree without manifests. Step 1 stops and reports the error. It does not report
+"Recommended (0)".
 
 ---
 
@@ -300,10 +435,17 @@ verification issues found and fixed, and the tailoring applied.
 
 ### "Path reference errors after project-level install"
 
-- Some skills assume `~/.claude/` paths. Step 8 finds these.
+- Some skills assume `~/.claude/` paths. Step 9 finds these.
 - For `continuous-learning-v2`, `~/.claude/homunculus/` is always user-level — expected, not an error.
+
+### "Not an ECC tree" from Step 0
+
+The resolver found a directory that is not an ECC checkout — most often the repository
+you are standing in. Set `CLAUDE_PLUGIN_ROOT`, or pass the path to your ECC clone.
 
 ### "A skill I expected was not recommended"
 
-The assessment only recommends what repository evidence supports. Ask for it explicitly
-and it will be installed — but the absence of a recommendation is itself the finding.
+Check the excluded table first: if its bundle was eliminated in Step 2, the skill was
+never assessed individually, and the bundle-level evidence is the thing to argue with.
+Ask for the skill explicitly and it will be installed — but the absence of a
+recommendation is itself the finding.
