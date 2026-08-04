@@ -587,70 +587,41 @@ patch_mcp_catalog() {
 
   [[ -f "$mcp_src" ]] || { warn "ECC mcp-servers.json not found at $mcp_src — skipped"; return; }
 
-  # 1. Replace all YOUR_*_HERE placeholders with ${VAR_NAME} syntax.
+  # 1. Replace all YOUR_*_HERE placeholders with ${VAR_NAME} syntax, looked up
+  #    from mcp-placeholder-map.json — adding a new MCP server's placeholder is
+  #    a data edit to that file, not a bash edit here.
   #    Claude Code expands ${VAR} in command/args/env/url/headers fields.
   #    If the env var is unset, parsing fails and the server stays disabled.
   # 2. Replace filesystem path placeholder with a safe default.
   # 3. Strip description fields and _comments (not valid in .claude.json).
+  local placeholder_map="${SCRIPT_DIR}/mcp-placeholder-map.json"
+  [[ -f "$placeholder_map" ]] || die "mcp-placeholder-map.json missing at $placeholder_map"
   local mcp_processed
   mcp_processed="$(mktemp)"
   sed \
     -e 's|/path/to/your/projects|${MCP_FILESYSTEM_PATH:-$HOME}|g' \
     "$mcp_src" \
-    | jq '
-      def fix_placeholders:
+    | jq --slurpfile map "$placeholder_map" '
+      def fix_placeholders($m):
         if type == "object" then
           to_entries
           | map(
             if .value == null then .
             elif (.key == "description") then empty
-            else .value = (.value | fix_placeholders) | .
+            else .value = (.value | fix_placeholders($m)) | .
             end
           )
           | from_entries
         elif type == "array" then
-          map(fix_placeholders)
+          map(fix_placeholders($m))
         elif type == "string" then
-          gsub(
-            "YOUR_JIRA_URL_HERE";           "${JIRA_URL}"
-          ) | gsub(
-            "YOUR_JIRA_EMAIL_HERE";         "${JIRA_EMAIL}"
-          ) | gsub(
-            "YOUR_JIRA_API_TOKEN_HERE";     "${JIRA_API_TOKEN}"
-          ) | gsub(
-            "YOUR_GITHUB_PAT_HERE";         "${GITHUB_PERSONAL_ACCESS_TOKEN}"
-          ) | gsub(
-            "YOUR_FIRECRAWL_KEY_HERE";      "${FIRECRAWL_API_KEY}"
-          ) | gsub(
-            "YOUR_PROJECT_REF";             "${SUPABASE_PROJECT_REF}"
-          ) | gsub(
-            "YOUR_EXA_API_KEY_HERE";        "${EXA_API_KEY}"
-          ) | gsub(
-            "YOUR_FAL_KEY_HERE";            "${FAL_KEY}"
-          ) | gsub(
-            "YOUR_BROWSERBASE_KEY_HERE";    "${BROWSERBASE_API_KEY}"
-          ) | gsub(
-            "YOUR_BROWSER_USE_KEY_HERE";    "${BROWSER_USE_API_KEY}"
-          ) | gsub(
-            "YOUR_CONFLUENCE_URL_HERE";     "${CONFLUENCE_BASE_URL}"
-          ) | gsub(
-            "YOUR_EMAIL_HERE";              "${CONFLUENCE_EMAIL}"
-          ) | gsub(
-            "YOUR_CONFLUENCE_TOKEN_HERE";   "${CONFLUENCE_API_TOKEN}"
-          ) | gsub(
-            "YOUR_OPENAI_API_KEY_HERE";     "${OPENAI_API_KEY}"
-          ) | gsub(
-            "YOUR_CS_ACCESS_TOKEN_HERE";    "${CS_ACCESS_TOKEN}"
-          ) | gsub(
-            "YOUR_MEMXUS_API_KEY_HERE";     "${MEMXUS_API_KEY}"
-          ) | gsub(
-            "YOUR_LOWERCASE_HARNESS_SLUG_HERE"; "${ECC_MEMORY_HARNESS}"
-          )
+          reduce ($m | to_entries[]) as $e (.; gsub($e.key; "${" + $e.value + "}"))
         else .
         end;
 
-      del(._comments)
-      | .mcpServers |= map_values(fix_placeholders)
+      ($map[0]) as $m
+      | del(._comments)
+      | .mcpServers |= map_values(fix_placeholders($m))
     ' > "$mcp_processed" \
     || die "jq failed to process MCP catalog from $mcp_src"
 
