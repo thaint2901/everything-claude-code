@@ -63,30 +63,29 @@ which `commands/project-init.md` already forbids.
 
 Use the resolver this repo already ships rather than a fresh guess:
 
-```bash
-# 1. Claude Code exports this when ECC runs as a plugin.
-ECC_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
-
-# 2. Otherwise ask resolve-ecc-root.js, which walks
-#    env var -> standard install -> known plugin roots -> plugin cache.
-[ -n "$ECC_ROOT" ] || ECC_ROOT=$(node -e \
-  'try{console.log(require(require("os").homedir()+"/.claude/scripts/lib/resolve-ecc-root").resolveEccRoot())}catch(e){}' \
-  2>/dev/null)
-
-# 3. Last resort: the repository the user is standing in.
-[ -n "$ECC_ROOT" ] || ECC_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-```
-
-Then verify the tree really is ECC. This check matters more than it looks: `git
-rev-parse` succeeds in *any* git repository, so without it `ECC_ROOT` can point at the
-user's own unrelated project, and the mistake surfaces several steps later as a
-confusing "module not found" rather than as the source-detection failure it is.
+Check every candidate rather than settling on the first one that is non-empty — each
+source below can hand back a path that is not an ECC tree:
 
 ```bash
-for f in scripts/install-plan.js manifests/install-modules.json skills; do
-  [ -e "$ECC_ROOT/$f" ] || { echo "Not an ECC tree: $ECC_ROOT (missing $f)"; exit 1; }
+is_ecc() { [ -f "$1/scripts/install-plan.js" ] && [ -f "$1/manifests/install-modules.json" ]; }
+
+ECC_ROOT=""
+for cand in \
+  "${CLAUDE_PLUGIN_ROOT:-}" \
+  "$(node -e 'try{console.log(require(require("os").homedir()+"/.claude/scripts/lib/resolve-ecc-root").resolveEccRoot())}catch(e){}' 2>/dev/null)" \
+  "$(git rev-parse --show-toplevel 2>/dev/null)"; do
+  if [ -n "$cand" ] && is_ecc "$cand"; then ECC_ROOT="$cand"; break; fi
 done
+
+[ -n "$ECC_ROOT" ] || { echo "No ECC checkout found — set CLAUDE_PLUGIN_ROOT or pass a path"; exit 1; }
 ```
+
+Both middle steps fail in ways that look like success. `resolveEccRoot()` returns
+`~/.claude` when it finds no install — non-empty, but not an ECC tree — so a
+first-non-empty-wins chain stops there and never reaches the git fallback. And `git
+rev-parse` succeeds in *any* git repository, so it happily returns the user's own
+project. Each candidate is a guess; `is_ecc` is what turns it into an answer, which is
+why it runs on all of them and not once at the end.
 
 If every option fails, say so and ask the user for a path. Clone
 `https://github.com/affaan-m/everything-claude-code.git` only with explicit
@@ -121,6 +120,11 @@ with `skill-` are the thematic bundles; each one's `paths` globs name the skills
 owns. Ask one cheap question per bundle — "does this repository touch this area at
 all?" — answered from a file listing, package manifests, and CI config.
 
+If that file cannot be read or parsed, stop and report it, exactly as in Step 1. An
+unreadable manifest yields zero bundles, every candidate survives by default, and the
+report then shows nothing eliminated — which is indistinguishable from honestly
+concluding that every bundle applies.
+
 One negative answer removes every skill in that bundle. This is where the cost of the
 assessment is actually controlled.
 
@@ -145,7 +149,10 @@ single question each.
 
 Only for skills inside surviving bundles.
 
-Run `/project-init --dry-run` and keep its detected-stack evidence and resolved plan.
+Run `/project-init --dry-run` and keep its detected-stack evidence and resolved plan. If
+it fails or returns nothing, say so and continue on the repository evidence alone — do
+not let a tooling failure pass as "this repo has no stack signal", which is what an
+empty result looks like from here.
 Cross-reference `$ECC_ROOT/config/project-stack-mappings.json`, which maps project
 indicator files to ECC skills, rules, hooks, and commands. It covers a minority of the
 catalogue, so treat a hit as a shortcut and its absence as no signal either way.
@@ -284,17 +291,26 @@ Set the target directory:
 
 - User-level: `TARGET=~/.claude`
 - Project-level: `TARGET=.claude` (relative to current project root)
-- Both: `TARGET_USER=~/.claude`, `TARGET_PROJECT=.claude`
+- Both: there is no combined target. Run Steps 8 and 9 once per level, setting `TARGET`
+  each time, and split the shortlist deliberately — shared skills user-level,
+  project-specific ones project-level.
+
+`TARGET` must hold a value before anything below runs. An unset one does not fail
+loudly: `mkdir -p $TARGET/skills` quietly becomes `mkdir -p /skills` at the filesystem
+root, and every later `cp` follows it there.
 
 ```bash
-mkdir -p $TARGET/skills $TARGET/rules
+mkdir -p "$TARGET/skills" "$TARGET/rules"
 ```
 
 ---
 
 ## Step 8: Install the Shortlist
 
-For each approved skill, copy the entire skill directory from the correct source root:
+For each approved skill, copy the entire skill directory from the correct source root. On
+a "Both" install, copy only the subset Step 7 assigned to this `TARGET` — running the
+full shortlist twice puts every shared skill in both locations, and Step 9 will not catch
+it, because it checks that approved items are present and not that extra ones are absent.
 
 ```bash
 # Core skills live under .agents/skills/
@@ -329,10 +345,13 @@ cp -r "$ECC_ROOT/rules/<language>" "$TARGET/rules/<language>"
 
 ## Step 9: Verify the Installation
 
-Start by reconciling what is on disk against what was approved in Step 6:
+Start by reconciling what is on disk against what was approved for **this** `TARGET`. On
+a "Both" install that is the subset Step 7 assigned to the level being verified, not the
+whole Step 6 shortlist — diffing against the full list would report the other level's
+skills as missing on every pass, and real breakage would be lost in that noise.
 
 ```bash
-ls -la $TARGET/skills/ $TARGET/rules/
+ls -la "$TARGET/skills/" "$TARGET/rules/"
 ```
 
 Count and diff — do not just look. Every approved item must be present. This ordering
@@ -342,8 +361,8 @@ produce the same output. A partial install must be reported as an install failur
 as an absence of issues.
 
 ```bash
-grep -rn "~/.claude/" $TARGET/skills/ $TARGET/rules/
-grep -rn "../common/" $TARGET/rules/
+grep -rn "~/.claude/" "$TARGET/skills/" "$TARGET/rules/"
+grep -rn "../common/" "$TARGET/rules/"
 ```
 
 **For project-level installs**, flag references to `~/.claude/` paths:
@@ -353,7 +372,9 @@ grep -rn "../common/" $TARGET/rules/
 - A skill referencing another skill by name — check the referenced skill was installed
 
 Derive cross-references instead of assuming them: grep the installed files for the names
-of other candidates from Step 1, and report any hit that was not installed. A `*-tdd` or
+of other candidates from Step 1, and report any hit that was not installed. On a "Both"
+install, check both targets before calling a reference broken — a project-level skill may
+legitimately depend on one installed user-level. A `*-tdd` or
 `*-testing` skill usually expects its matching `*-patterns` skill, and
 `continuous-learning-v2` expects the user-level `~/.claude/homunculus/` directory — but
 find those by looking, since a dependency list written here goes stale exactly like a
@@ -393,10 +414,15 @@ searched for. That is what turns the next run into a diff ("no React last time, 
 now") rather than a fresh guess.
 
 If the project keeps an `ecc-install.json`, keep it consistent with what was installed;
-`/project-init --config ecc-install.json` can then reproduce the install.
+`/project-init --config ecc-install.json` can then reproduce the install. That format
+holds a single `target`, so a "Both" install does not fit in one file — write one record
+per level, or say in the record which level it covers. Do not let it silently describe
+half the install as though it were all of it.
 
 Print a summary: install level and path, what was installed, what was excluded and why,
-verification issues found and fixed, and the tailoring applied.
+verification issues found and what was actually done about them, and the tailoring
+applied. Step 9 reports issues; nothing in this skill fixes them on its own, so do not
+write "fixed" unless a fix was made.
 
 ---
 
@@ -438,10 +464,11 @@ tree without manifests. Step 1 stops and reports the error. It does not report
 - Some skills assume `~/.claude/` paths. Step 9 finds these.
 - For `continuous-learning-v2`, `~/.claude/homunculus/` is always user-level — expected, not an error.
 
-### "Not an ECC tree" from Step 0
+### "No ECC checkout found" from Step 0
 
-The resolver found a directory that is not an ECC checkout — most often the repository
-you are standing in. Set `CLAUDE_PLUGIN_ROOT`, or pass the path to your ECC clone.
+No candidate passed `is_ecc` — usually because ECC is not installed as a plugin and the
+repository you are standing in is not ECC either. Set `CLAUDE_PLUGIN_ROOT`, or pass the
+path to your ECC clone.
 
 ### "A skill I expected was not recommended"
 

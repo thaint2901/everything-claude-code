@@ -51,27 +51,23 @@ origin: ECC
 
 使用本仓库已经提供的解析器，而不是临时另猜一套：
 
-```bash
-# 1. Claude Code exports this when ECC runs as a plugin.
-ECC_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
-
-# 2. Otherwise ask resolve-ecc-root.js, which walks
-#    env var -> standard install -> known plugin roots -> plugin cache.
-[ -n "$ECC_ROOT" ] || ECC_ROOT=$(node -e \
-  'try{console.log(require(require("os").homedir()+"/.claude/scripts/lib/resolve-ecc-root").resolveEccRoot())}catch(e){}' \
-  2>/dev/null)
-
-# 3. Last resort: the repository the user is standing in.
-[ -n "$ECC_ROOT" ] || ECC_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-```
-
-然后验证这棵目录树确实是 ECC。这项检查比看上去更重要：`git rev-parse` 在*任何* git 仓库里都会成功，所以少了它，`ECC_ROOT` 就可能指向用户自己毫不相干的项目，而这个错误要等到好几步之后，才会以一句令人困惑的 "module not found" 冒出来，而不是以它本来的面目 — 一次源定位失败 — 呈现。
+逐个检查每个候选项，而不是认定第一个非空的就是答案 — 下面每一个来源都可能交回一个并非 ECC 目录树的路径：
 
 ```bash
-for f in scripts/install-plan.js manifests/install-modules.json skills; do
-  [ -e "$ECC_ROOT/$f" ] || { echo "Not an ECC tree: $ECC_ROOT (missing $f)"; exit 1; }
+is_ecc() { [ -f "$1/scripts/install-plan.js" ] && [ -f "$1/manifests/install-modules.json" ]; }
+
+ECC_ROOT=""
+for cand in \
+  "${CLAUDE_PLUGIN_ROOT:-}" \
+  "$(node -e 'try{console.log(require(require("os").homedir()+"/.claude/scripts/lib/resolve-ecc-root").resolveEccRoot())}catch(e){}' 2>/dev/null)" \
+  "$(git rev-parse --show-toplevel 2>/dev/null)"; do
+  if [ -n "$cand" ] && is_ecc "$cand"; then ECC_ROOT="$cand"; break; fi
 done
+
+[ -n "$ECC_ROOT" ] || { echo "No ECC checkout found — set CLAUDE_PLUGIN_ROOT or pass a path"; exit 1; }
 ```
+
+中间那两步的失败都长得像成功。`resolveEccRoot()` 在找不到任何安装时会返回 `~/.claude` — 非空，却不是一棵 ECC 目录树 — 所以"谁先非空谁胜出"的链条会停在这里，永远走不到 git 兜底那一步。而 `git rev-parse` 在*任何* git 仓库里都会成功，于是它会心安理得地返回用户自己的项目。每个候选项都只是一次猜测；把猜测变成答案的是 `is_ecc`，这正是它要对所有候选项逐一执行、而不是最后只跑一次的原因。
 
 如果所有途径都失败，就如实说明，并向用户索要路径。只有在获得明确同意后才克隆
 `https://github.com/affaan-m/everything-claude-code.git`，并在安装完成后 `rm -rf` 掉这份克隆。
@@ -96,6 +92,8 @@ node "$ECC_ROOT/scripts/install-plan.js" --list-components --family skill --json
 
 读取 `$ECC_ROOT/manifests/install-modules.json`。`id` **不以** `skill-` 开头的模块就是主题分组；每个模块的 `paths` 通配符指明了它所拥有的技能。对每个分组问一个廉价的问题 — "这个仓库是否涉及这个领域？" — 用文件清单、包管理清单和 CI 配置来回答。
 
+如果这个文件读不出来或解析不了，就停下来报告，和步骤 1 完全一样。一份读不出来的清单文件会产出零个分组，于是每个候选项都默认幸存，报告最终显示什么都没被淘汰 — 而这与"如实得出每个分组都适用"的结论无从分辨。
+
 一个否定回答就移除该分组下的全部技能。评估的成本正是在这里被真正控制住的。
 
 要果断地淘汰，因为两种代价并不对称：错误排除一个分组，代价是用户多说一句话；而错误纳入一个分组，代价是每次会话都要消耗上下文，且没有尽头。
@@ -113,7 +111,7 @@ node "$ECC_ROOT/scripts/install-plan.js" --list-components --family skill --json
 
 仅针对幸存分组内部的技能。
 
-运行 `/project-init --dry-run`，保留它检测到的技术栈证据和解析出的计划。交叉参考 `$ECC_ROOT/config/project-stack-mappings.json`，它把项目指示文件映射到 ECC 的技能、规则、钩子和命令。它只覆盖了整个目录中的一小部分，因此命中就当作捷径，未命中则既不算支持也不算反对。
+运行 `/project-init --dry-run`，保留它检测到的技术栈证据和解析出的计划。如果它失败或什么都没返回，就如实说明，并仅凭仓库中的证据继续 — 不要让一次工具失败冒充成"这个仓库没有技术栈信号"，因为从这里看，空结果正是那副样子。交叉参考 `$ECC_ROOT/config/project-stack-mappings.json`，它把项目指示文件映射到 ECC 的技能、规则、钩子和命令。它只覆盖了整个目录中的一小部分，因此命中就当作捷径，未命中则既不算支持也不算反对。
 
 然后通过阅读仓库，越过映射所能表达的范围：
 
@@ -214,17 +212,19 @@ Options:
 
 - 用户级: `TARGET=~/.claude`
 - 项目级: `TARGET=.claude`（相对于当前项目根目录）
-- 两者: `TARGET_USER=~/.claude`, `TARGET_PROJECT=.claude`
+- 两者: 不存在合并的目标目录。对每个级别各跑一遍步骤 8 和步骤 9，每次都设置好 `TARGET`，并有意识地拆分清单 — 共享的技能装到用户级，项目专属的装到项目级。
+
+在下面的任何内容运行之前，`TARGET` 必须已经有值。未设置的 `TARGET` 不会大声报错：`mkdir -p $TARGET/skills` 会悄无声息地变成在文件系统根目录执行 `mkdir -p /skills`，之后每一次 `cp` 都会跟着跑到那里去。
 
 ```bash
-mkdir -p $TARGET/skills $TARGET/rules
+mkdir -p "$TARGET/skills" "$TARGET/rules"
 ```
 
 ---
 
 ## 步骤 8：安装清单
 
-对每个已批准的技能，从正确的源根目录复制整个技能目录：
+对每个已批准的技能，从正确的源根目录复制整个技能目录。在"两者"安装下，只复制步骤 7 分配给当前这个 `TARGET` 的那个子集 — 把完整清单跑两遍，会把每一个共享技能都装进两个位置，而步骤 9 抓不到这一点，因为它检查的是已批准的条目在不在，而不是有没有多出来的条目。
 
 ```bash
 # Core skills live under .agents/skills/
@@ -255,17 +255,17 @@ cp -r "$ECC_ROOT/rules/<language>" "$TARGET/rules/<language>"
 
 ## 步骤 9：验证安装
 
-先把磁盘上的实际内容与步骤 6 批准的内容对账：
+先把磁盘上的实际内容与**本次** `TARGET` 所批准的内容对账。在"两者"安装下，那指的是步骤 7 分配给当前正在验证的这一级别的那个子集，而不是步骤 6 的整份清单 — 拿完整清单去做差异对比，会在每一轮都把另一个级别的技能报成缺失，真正的故障就会淹没在这些噪音里。
 
 ```bash
-ls -la $TARGET/skills/ $TARGET/rules/
+ls -la "$TARGET/skills/" "$TARGET/rules/"
 ```
 
 要清点并做差异对比 — 不要只是扫一眼。每一个已批准的条目都必须在场。这个先后顺序很重要，因为在下面这些 grep 检查之下，一个空目录读起来与"一切正常"毫无区别：`grep` 什么都没找到，和 `grep` 根本没有东西可搜，产生的输出是一样的。安装不完整必须按安装失败来报告，而不是报成"没有发现问题"。
 
 ```bash
-grep -rn "~/.claude/" $TARGET/skills/ $TARGET/rules/
-grep -rn "../common/" $TARGET/rules/
+grep -rn "~/.claude/" "$TARGET/skills/" "$TARGET/rules/"
+grep -rn "../common/" "$TARGET/rules/"
 ```
 
 **对于项目级安装**，标记出对 `~/.claude/` 路径的引用：
@@ -274,7 +274,7 @@ grep -rn "../common/" $TARGET/rules/
 - `~/.claude/skills/` 或 `~/.claude/rules/` — 在项目级安装下可能失效
 - 某技能按名称引用另一技能 — 检查被引用的技能是否也已安装
 
-交叉引用要推导出来，而不是想当然：在已安装的文件里 grep 步骤 1 中其他候选项的名字，凡是命中却没有安装的都要报告。`*-tdd` 或 `*-testing` 技能通常期望其对应的 `*-patterns` 技能，`continuous-learning-v2` 期望用户级的 `~/.claude/homunculus/` 目录 — 但这些要靠实地查找来发现，因为写在这里的依赖列表，会像硬编码的技能列表一样过期。
+交叉引用要推导出来，而不是想当然：在已安装的文件里 grep 步骤 1 中其他候选项的名字，凡是命中却没有安装的都要报告。在"两者"安装下，在断定某个引用失效之前要把两个目标都检查一遍 — 项目级的技能完全可能合理地依赖一个装在用户级的技能。`*-tdd` 或 `*-testing` 技能通常期望其对应的 `*-patterns` 技能，`continuous-learning-v2` 期望用户级的 `~/.claude/homunculus/` 目录 — 但这些要靠实地查找来发现，因为写在这里的依赖列表，会像硬编码的技能列表一样过期。
 
 每个问题按"文件、行号、问题所在、建议修复"来报告。
 
@@ -303,9 +303,9 @@ Options:
 
 把评估结果 — 选中项、排除项及各自理由 — 写到项目中一个持久的位置，好让下一次运行是与之做差异对比，而不是从头再来。要记录**跑过哪些检查**，而不只是结论：打开了哪些文件、搜索了什么。正是这些内容能把下一次运行变成一次差异对比（"上次没有 React，这次有了"），而不是重新猜一遍。
 
-如果项目维护着 `ecc-install.json`，让它与实际安装保持一致；之后 `/project-init --config ecc-install.json` 即可复现该安装。
+如果项目维护着 `ecc-install.json`，让它与实际安装保持一致；之后 `/project-init --config ecc-install.json` 即可复现该安装。该格式只容纳一个 `target`，因此"两者"安装塞不进一个文件 — 要么每个级别各写一条记录，要么在记录里写明它覆盖的是哪一个级别。不要让它悄无声息地把半个安装描述得好像那就是全部。
 
-打印一份摘要：安装级别与路径、装了什么、排除了什么及理由、发现并修复的验证问题、以及所做的定制。
+打印一份摘要：安装级别与路径、装了什么、排除了什么及理由、发现了哪些验证问题以及实际对它们做了什么、以及所做的定制。步骤 9 只负责报告问题；本技能中没有任何环节会自行修复它们，因此除非确实做了修复，否则不要写"已修复"。
 
 ---
 
@@ -337,9 +337,9 @@ Options:
 - 有些技能假定 `~/.claude/` 路径。步骤 9 会找出这些问题。
 - 对于 `continuous-learning-v2`，`~/.claude/homunculus/` 始终是用户级的 — 这是预期行为，不是错误。
 
-### 步骤 0 报 "Not an ECC tree"
+### 步骤 0 报 "No ECC checkout found"
 
-解析器找到的目录并不是一份 ECC 检出 — 最常见的情况是你当前所在的那个仓库。设置 `CLAUDE_PLUGIN_ROOT`，或者把你的 ECC 克隆路径传进去。
+没有任何候选项通过 `is_ecc` — 通常是因为 ECC 没有作为插件安装，而你当前所在的那个仓库本身也不是 ECC。设置 `CLAUDE_PLUGIN_ROOT`，或者把你的 ECC 克隆路径传进去。
 
 ### "我期望的某个技能没有被推荐"
 

@@ -6,19 +6,16 @@ const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 
-const configureEccDocs = [
-  'skills/configure-ecc/SKILL.md',
-  'docs/zh-CN/skills/configure-ecc/SKILL.md',
-  'docs/ja-JP/skills/configure-ecc/SKILL.md',
-];
+const configureEccDocs = ['skills/configure-ecc/SKILL.md', 'docs/zh-CN/skills/configure-ecc/SKILL.md', 'docs/ja-JP/skills/configure-ecc/SKILL.md'];
 
 // A markdown table row whose first cell is nothing but a backticked identifier —
 // the shape the hand-maintained skill catalogue used before the rewrite.
 const SKILL_TABLE_ROW = /^\| *`[a-z0-9][a-z0-9-]*` *\|/gm;
 
-// Tolerate a stray illustrative row; the regression this guards against was 32-49
-// rows per file, so a small threshold catches it without breaking on one example.
-const MAX_ROWS = 5;
+// Tolerate a stray illustrative row, nothing more. The regression this guards against
+// was 32-49 rows per file, but a "starter set" of five hardcoded skills is a plausible
+// size too, so the threshold has to stay well under that to still catch one.
+const MAX_ROWS = 2;
 
 let passed = 0;
 let failed = 0;
@@ -58,14 +55,8 @@ for (const relativePath of configureEccDocs) {
   test(`${relativePath} resolves candidates from the manifest`, () => {
     const content = readConfigureEccDoc(relativePath);
 
-    assert.ok(
-      content.includes('install-plan.js'),
-      'Expected configure-ecc to build its candidate set via install-plan.js'
-    );
-    assert.ok(
-      content.includes('--list-components'),
-      'Expected configure-ecc to enumerate components rather than name them inline'
-    );
+    assert.ok(content.includes('install-plan.js'), 'Expected configure-ecc to build its candidate set via install-plan.js');
+    assert.ok(content.includes('--list-components'), 'Expected configure-ecc to enumerate components rather than name them inline');
   });
 }
 
