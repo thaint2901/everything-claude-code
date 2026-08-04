@@ -103,7 +103,12 @@ function runInstallTests() {
     passed++;
   else failed++;
 
-  if (
+  // Windows/NTFS has no POSIX permission bits — chmod there doesn't produce
+  // a real 0o700 mode, so this assertion is meaningless on win32 (same class
+  // of platform gap as the GNU-only find -printf notes elsewhere in this repo).
+  if (process.platform === 'win32') {
+    console.log('  ⊘ sets mode 700 on the copied hook file (skipped: no POSIX permission bits on win32)');
+  } else if (
     test('sets mode 700 on the copied hook file', () => {
       const r = runInstall();
       assert.strictEqual(r.status, 0, `exit ${r.status}: ${r.stderr}`);
