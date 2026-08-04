@@ -8,6 +8,15 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+// Three of these route through gateguard-fact-force and assert it denies. Every
+// Claude Code session exports ECC_GATEGUARD=off once setup_claude.sh has run, and
+// an inherited off-switch turns those into failures against a gate that never
+// ran. A dispatcher test has to own the flags that disable what it dispatches to.
+delete process.env.ECC_GATEGUARD;
+delete process.env.GATEGUARD_DISABLED;
+delete process.env.GATEGUARD_BASH_ROUTINE_DISABLED;
+delete process.env.ECC_DISABLED_HOOKS;
+
 const preDispatcher = path.join(__dirname, '..', '..', 'scripts', 'hooks', 'pre-bash-dispatcher.js');
 const postDispatcher = path.join(__dirname, '..', '..', 'scripts', 'hooks', 'post-bash-dispatcher.js');
 

@@ -10,6 +10,12 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+// These assertions pin which hook IDs the dispatcher selects. setup_claude.sh
+// writes ECC_DISABLED_HOOKS into settings.json, so every Claude Code session
+// exports it and the inherited list silently removes IDs the assertions expect.
+// A test that pins a selection has to own the input that filters it.
+delete process.env.ECC_DISABLED_HOOKS;
+
 const repoRoot = path.join(__dirname, '..', '..');
 const hooksPath = path.join(repoRoot, 'hooks', 'hooks.json');
 const dispatcherPath = path.join(repoRoot, 'scripts', 'hooks', 'posttooluse-dispatcher.js');
