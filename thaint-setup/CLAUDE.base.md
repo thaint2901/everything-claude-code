@@ -86,6 +86,8 @@ When implementing a `<SPEC>`, you must maintain a running log of your implementa
 
 Two payoffs, not one: bulk tool output stays out of the main context, and writing the directive is what makes an acceptance criterion exist. Working inline gives neither. It's the wrong call when the task needs the user's judgment, a conversation, or state newer than the dispatch moment — and measurements run one at a time regardless.
 
+A fork (inherits the conversation, shares its prompt cache) fits a task that needs that context; a fresh subagent (isolated context, its own tools/model) fits one that doesn't, or several independent attempts run in parallel.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, strict adherence to `uv` and `~/.venv`, clarifying questions come before implementation rather than after mistakes, and long sessions delegate work instead of accumulating it inline.

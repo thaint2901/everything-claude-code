@@ -147,7 +147,7 @@ function evaluateConditions(bridge, options = {}) {
       warnings.push({
         severity: 1,
         type: 'delegation',
-        message: `[Delegation] context ~${usedStep}% used - hand the next independent task to a subagent/fork (CLAUDE.md §7)`
+        message: `[Delegation] context ~${usedStep}% used - hand the next independent task to a subagent or fork (~/.claude/CLAUDE.md §7)`
       });
     }
   }
