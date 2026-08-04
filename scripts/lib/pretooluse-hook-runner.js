@@ -198,8 +198,29 @@ function runHooks(rawInput, hooks, options = {}) {
   };
 }
 
+/**
+ * Fail-open-by-omission guard: `hook.critical` being `undefined` is
+ * indistinguishable from `critical: false` inside runHooks()'s catch block —
+ * both route to the advisory (fail-open) branch. This asserts every member of
+ * a PreToolUse chain explicitly declares `critical: true` or `critical:
+ * false`, so a future hard-denial-capable hook added without the flag fails
+ * at load time instead of silently failing open the first time it throws.
+ *
+ * @param {Array<{id: string, critical?: boolean}>} hooks
+ */
+function assertCriticalDeclared(hooks) {
+  const missing = hooks.filter(hook => !Object.prototype.hasOwnProperty.call(hook, 'critical'));
+  if (missing.length) {
+    throw new Error(
+      `every PreToolUse chain member must explicitly declare critical: true or critical: false — missing on: ${missing.map(h => h.id).join(', ')}. ` +
+      'An omitted field silently defaults to fail-open if that member throws.'
+    );
+  }
+}
+
 module.exports = {
   runHooks,
   normalizeHookResult,
   isJsonDeny,
+  assertCriticalDeclared,
 };

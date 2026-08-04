@@ -12,7 +12,7 @@ const assert = require('assert');
 delete process.env.ECC_DISABLED_HOOKS;
 delete process.env.ECC_HOOK_PROFILE;
 
-const { runHooks, normalizeHookResult, isJsonDeny } = require('../../scripts/lib/pretooluse-hook-runner');
+const { runHooks, normalizeHookResult, isJsonDeny, assertCriticalDeclared } = require('../../scripts/lib/pretooluse-hook-runner');
 
 function test(name, fn) {
   try {
@@ -191,6 +191,40 @@ function runTests() {
     ];
     runHooks('{}', hooks, { truncated: true, maxStdin: 42 });
     assert.deepStrictEqual(seenOptions, { truncated: true, maxStdin: 42 });
+  })) passed++; else failed++;
+
+  if (test('assertCriticalDeclared throws when any entry omits critical, naming the offending id', () => {
+    assert.throws(
+      () => assertCriticalDeclared([
+        { id: 'test:has-critical-true', critical: true },
+        { id: 'test:missing-critical' },
+      ]),
+      /missing on: test:missing-critical/,
+      'an entry with no critical key at all must throw and name itself'
+    );
+  })) passed++; else failed++;
+
+  if (test('assertCriticalDeclared names every offending id when several entries omit critical', () => {
+    assert.throws(
+      () => assertCriticalDeclared([
+        { id: 'test:missing-a' },
+        { id: 'test:has-it', critical: false },
+        { id: 'test:missing-b' },
+      ]),
+      /missing on: test:missing-a, test:missing-b/,
+      'both offending ids must be named, in order, and the declared one excluded'
+    );
+  })) passed++; else failed++;
+
+  if (test('assertCriticalDeclared does not throw when every entry declares critical (true or false)', () => {
+    assert.doesNotThrow(() => assertCriticalDeclared([
+      { id: 'test:a', critical: true },
+      { id: 'test:b', critical: false },
+    ]));
+  })) passed++; else failed++;
+
+  if (test('assertCriticalDeclared does not throw on an empty hooks array', () => {
+    assert.doesNotThrow(() => assertCriticalDeclared([]));
   })) passed++; else failed++;
 
   console.log(`\nResults: Passed: ${passed}, Failed: ${failed}`);

@@ -420,6 +420,20 @@ function runTests() {
     }
   })) passed++; else failed++;
 
+  if (test('the real EDIT_WRITE_HOOKS array declares critical on every entry (load-time guard)', () => {
+    // EDIT_WRITE_HOOKS/assertCriticalDeclared already ran once as a side
+    // effect of requiring edit-write-hook-dispatcher.js anywhere above — a
+    // future entry added without an explicit critical: true/false would have
+    // already crashed module load. Re-assert explicitly here so the failure
+    // message names the offending hook id if that ever regresses.
+    const { EDIT_WRITE_HOOKS } = require('../../scripts/hooks/edit-write-hook-dispatcher');
+    const { assertCriticalDeclared } = require('../../scripts/lib/pretooluse-hook-runner');
+    assert.doesNotThrow(
+      () => assertCriticalDeclared(EDIT_WRITE_HOOKS),
+      'a future EDIT_WRITE_HOOKS entry added without an explicit critical: true/false must fail CI at load time, not silently fail open'
+    );
+  })) passed++; else failed++;
+
   console.log(`\nResults: Passed: ${passed}, Failed: ${failed}`);
   process.exit(failed > 0 ? 1 : 0);
 }

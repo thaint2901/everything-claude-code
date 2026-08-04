@@ -28,7 +28,7 @@
 
 'use strict';
 
-const { runHooks } = require('../lib/pretooluse-hook-runner');
+const { runHooks, assertCriticalDeclared } = require('../lib/pretooluse-hook-runner');
 
 const { run: runConfigProtection } = require('./config-protection');
 const { run: runGateGuard } = require('./gateguard-fact-force');
@@ -77,14 +77,20 @@ const EDIT_WRITE_HOOKS = [
   {
     id: 'pre:write:doc-file-warning',
     profiles: 'standard,strict',
+    critical: false,
     run: onlyForTools(['write'], runDocFileWarning),
   },
   {
     id: 'pre:edit-write:suggest-compact',
     profiles: 'standard,strict',
+    critical: false,
     run: onlyForTools(['edit', 'write'], runSuggestCompact),
   },
 ];
+
+// Every member must explicitly opt in or out of fail-closed behavior — see
+// assertCriticalDeclared()'s doc comment for why an omission is dangerous.
+assertCriticalDeclared(EDIT_WRITE_HOOKS);
 
 function runPreEditWrite(rawInput, options = {}) {
   return runHooks(rawInput, EDIT_WRITE_HOOKS, options);

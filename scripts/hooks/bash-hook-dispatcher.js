@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-const { runHooks } = require('../lib/pretooluse-hook-runner');
+const { runHooks, assertCriticalDeclared } = require('../lib/pretooluse-hook-runner');
 
 const { run: runBlockNoVerify } = require('./block-no-verify');
 const { run: runAutoTmuxDev } = require('./auto-tmux-dev');
@@ -19,25 +19,30 @@ const PRE_BASH_HOOKS = [
   {
     id: 'pre:bash:block-no-verify',
     profiles: 'minimal,standard,strict',
+    critical: false,
     run: rawInput => runBlockNoVerify(rawInput),
   },
   {
     id: 'pre:bash:auto-tmux-dev',
+    critical: false,
     run: rawInput => runAutoTmuxDev(rawInput),
   },
   {
     id: 'pre:bash:tmux-reminder',
     profiles: 'strict',
+    critical: false,
     run: rawInput => runTmuxReminder(rawInput),
   },
   {
     id: 'pre:bash:git-push-reminder',
     profiles: 'strict',
+    critical: false,
     run: rawInput => runGitPushReminder(rawInput),
   },
   {
     id: 'pre:bash:commit-quality',
     profiles: 'strict',
+    critical: false,
     run: rawInput => runCommitQuality(rawInput),
   },
   {
@@ -66,6 +71,7 @@ function assertGateguardLast(hooks) {
 }
 
 assertGateguardLast(PRE_BASH_HOOKS);
+assertCriticalDeclared(PRE_BASH_HOOKS);
 
 const POST_BASH_HOOKS = [
   {

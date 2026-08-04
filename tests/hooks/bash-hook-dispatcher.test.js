@@ -184,6 +184,20 @@ function runTests() {
     ]), 'an array without gateguard-fact-force at all should be fine');
   })) passed++; else failed++;
 
+  if (test('the real PRE_BASH_HOOKS array declares critical on every entry (load-time guard)', () => {
+    // PRE_BASH_HOOKS/assertCriticalDeclared already ran once as a side effect
+    // of the require() above (assertCriticalDeclared throws at load time if
+    // any entry omits `critical`) — requiring successfully here IS the
+    // assertion. Re-run it explicitly too so the failure message names the
+    // offending hook id instead of just "module load failed".
+    const { PRE_BASH_HOOKS } = require('../../scripts/hooks/bash-hook-dispatcher');
+    const { assertCriticalDeclared } = require('../../scripts/lib/pretooluse-hook-runner');
+    assert.doesNotThrow(
+      () => assertCriticalDeclared(PRE_BASH_HOOKS),
+      'a future PRE_BASH_HOOKS entry added without an explicit critical: true/false must fail CI at load time, not silently fail open'
+    );
+  })) passed++; else failed++;
+
   if (test('pre-bash-dispatcher.js denies destructive Bash via gateguard-fact-force (live route, not run-with-flags.js)', () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-gateguard-bash-live-'));
     const sessionId = `gateguard-bash-live-${process.pid}-${Date.now()}`;
