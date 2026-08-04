@@ -9,7 +9,6 @@
  * session file for cross-session continuity.
  */
 
-const path = require('path');
 const fs = require('fs');
 const { getSessionsDir, getDateString, getTimeString, getCurrentSessionFilePath, getProjectName, ensureDir, readFile, writeFile, runCommand, stripAnsi, log } = require('../lib/utils');
 const { generateSessionSummary, getContextRemainingPct, getContextThreshold } = require('../lib/llm-summary');
