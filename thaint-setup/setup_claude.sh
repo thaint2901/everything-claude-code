@@ -612,6 +612,16 @@ patch_mcp_catalog() {
   # 3. Strip description fields and _comments (not valid in .claude.json).
   local placeholder_map="${SCRIPT_DIR}/mcp-placeholder-map.json"
   [[ -f "$placeholder_map" ]] || die "mcp-placeholder-map.json missing at $placeholder_map"
+
+  # An empty/null value would still match and substitute via gsub below,
+  # producing a literal "${}" that the unmapped-placeholder check further
+  # down cannot catch (it only looks for YOUR_..._HERE text, which would
+  # already be gone) — so guard against it here instead.
+  local empty_placeholder_keys
+  empty_placeholder_keys="$(jq -r '[to_entries[] | select(.value == "" or .value == null) | .key] | join(", ")' "$placeholder_map")"
+  [[ -z "$empty_placeholder_keys" ]] \
+    || die "mcp-placeholder-map.json has empty/null values for: $empty_placeholder_keys — every placeholder must map to a non-empty env-var name"
+
   local mcp_processed
   mcp_processed="$(mktemp)"
   sed \
