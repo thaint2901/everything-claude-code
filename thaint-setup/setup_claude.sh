@@ -75,7 +75,7 @@ End-to-end Claude Code setup. Installs (always overwrites) into ${CLAUDE_HOME}:
   agents, commands, hooks-runtime, configure-ecc, strategic-compact, telegram-hook,
   ECC statusline (.statusLine; a hand-edited value is kept as-is),
   this fork's hook-audit env defaults (ECC_DISABLED_HOOKS,
-  GATEGUARD_BASH_ROUTINE_DISABLED — only set if unset)
+  ECC_GATEGUARD — only set if unset)
 Shell rc patch (.zshrc or .bashrc):
   alias clauded='claude --dangerously-skip-permissions'
   export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
@@ -393,7 +393,24 @@ readonly GRAPH_EXEMPT='["insaits-security","telegram-notify"]'
 ecc_disabled_hooks_default="$(grep -v '^[[:space:]]*#' "${SCRIPT_DIR}/disabled-hooks.txt" | grep -v '^[[:space:]]*$' | paste -sd, -)" \
   || die "disabled-hooks.txt at ${SCRIPT_DIR}/disabled-hooks.txt has no active hook entries (all lines are comments/blank) — refusing to silently disable nothing"
 readonly ECC_DISABLED_HOOKS_DEFAULT="$ecc_disabled_hooks_default"
-readonly GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT="1"
+
+# LOCAL (thaint): GateGuard off outright rather than its two hook ids in
+# disabled-hooks.txt.
+# `off` is one of gateguard-fact-force.js's ECC_DISABLE_VALUES and the check
+# runs once at the top of run(), so it covers both the Bash and the Edit/Write
+# gate. Audited over a full session: 7 denials, 1 of which surfaced anything
+# (a second test file asserting on the file being rewritten). The rest were
+# read-only commands, scratch files under the job tmp dir, and overwrites of
+# existing files — where its "confirm no existing file serves the same
+# purpose" prompt contradicts itself. Cost is not just the round trip: each
+# denial forces a facts block into the transcript, spending the context the
+# gate exists to protect. Its own suite is 129 pass / 15 fail, so the shipped
+# behaviour does not match its spec either.
+#
+# This also supersedes GATEGUARD_BASH_ROUTINE_DISABLED=1, which this script
+# used to set: that only relaxed the routine-Bash path of a gate now off
+# entirely.
+readonly ECC_GATEGUARD_DEFAULT="off"
 
 # Wires hooks/hooks.json into settings.json, the only place Claude Code reads
 # hooks from. The ECC installer copies the hook scripts and writes the same graph
@@ -505,16 +522,21 @@ normalize_hook_list() {
   printf '%s' "$1" | tr ',' '\n' | sort -u | paste -sd, -
 }
 
-# Applies this fork's hook-audit defaults (ECC_DISABLED_HOOKS,
-# GATEGUARD_BASH_ROUTINE_DISABLED) to settings.json's env block. Only sets a
-# key that is absent — an existing value is assumed to be a deliberate choice
-# (yours, or a previous run's) and is left alone, same as the statusLine
-# hand-edit check below.
+# Applies this fork's hook-audit defaults (ECC_DISABLED_HOOKS, ECC_GATEGUARD)
+# to settings.json's env block. Only sets a key that is absent — an existing
+# value is assumed to be a deliberate choice (yours, or a previous run's) and
+# is left alone, same as the statusLine hand-edit check below.
+#
+# That only-if-absent rule is why ECC_GATEGUARD reaches installs that already
+# exist while a disabled-hooks.txt edit would not: ECC_DISABLED_HOOKS is
+# already written on every prior install, so a new entry there is kept out by
+# the `//` fallback and only warned about. ECC_GATEGUARD has never been set by
+# this script, so it is absent everywhere and gets applied on the next run.
 ensure_ecc_hook_config() {
   local settings="${CLAUDE_HOME}/settings.json"
 
   if (( DRY_RUN )); then
-    printf '[dry-run] patch %s (env.ECC_DISABLED_HOOKS, env.GATEGUARD_BASH_ROUTINE_DISABLED — only if unset)\n' "$settings"
+    printf '[dry-run] patch %s (env.ECC_DISABLED_HOOKS, env.ECC_GATEGUARD — only if unset)\n' "$settings"
     return
   fi
 
@@ -522,7 +544,7 @@ ensure_ecc_hook_config() {
 
   local existing_disabled existing_gateguard
   existing_disabled="$(jq -r '.env.ECC_DISABLED_HOOKS // ""' "$settings")"
-  existing_gateguard="$(jq -r '.env.GATEGUARD_BASH_ROUTINE_DISABLED // ""' "$settings")"
+  existing_gateguard="$(jq -r '.env.ECC_GATEGUARD // ""' "$settings")"
 
   # Compared as normalized sets, not raw strings: the actual runtime behavior
   # (hook-flags.js's getDisabledHookIds() splits on `,` into a Set) never
@@ -532,22 +554,26 @@ ensure_ecc_hook_config() {
         && "$(normalize_hook_list "$existing_disabled")" != "$(normalize_hook_list "$ECC_DISABLED_HOOKS_DEFAULT")" ]]; then
     warn "env.ECC_DISABLED_HOOKS already set to a different value — keeping it (see thaint-setup/HOOK-CATALOG.md for this fork's defaults)"
   fi
-  if [[ -n "$existing_gateguard" && "$existing_gateguard" != "$GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT" ]]; then
-    warn "env.GATEGUARD_BASH_ROUTINE_DISABLED already set to a different value — keeping it"
+  # Compared case-insensitively: gateguard-fact-force.js lowercases the value
+  # before testing it against ECC_DISABLE_VALUES, so `OFF` and `off` behave
+  # identically at runtime and warning about the difference would be noise.
+  if [[ -n "$existing_gateguard" \
+        && "$(printf '%s' "$existing_gateguard" | tr '[:upper:]' '[:lower:]')" != "$ECC_GATEGUARD_DEFAULT" ]]; then
+    warn "env.ECC_GATEGUARD already set to a different value — keeping it (see thaint-setup/HOOK-CATALOG.md, \"Turning hooks off\")"
   fi
 
   local tmp
   tmp="$(mktemp)"
   jq \
     --arg disabled "$ECC_DISABLED_HOOKS_DEFAULT" \
-    --arg gateguard "$GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT" \
+    --arg gateguard "$ECC_GATEGUARD_DEFAULT" \
     '.env //= {}
      | .env.ECC_DISABLED_HOOKS = (.env.ECC_DISABLED_HOOKS // $disabled)
-     | .env.GATEGUARD_BASH_ROUTINE_DISABLED = (.env.GATEGUARD_BASH_ROUTINE_DISABLED // $gateguard)' \
+     | .env.ECC_GATEGUARD = (.env.ECC_GATEGUARD // $gateguard)' \
     "$settings" > "$tmp" \
     || die "jq failed to patch hook-audit env defaults in $settings"
   mv "$tmp" "$settings"
-  log "applied hook-audit env defaults (ECC_DISABLED_HOOKS, GATEGUARD_BASH_ROUTINE_DISABLED) where unset"
+  log "applied hook-audit env defaults (ECC_DISABLED_HOOKS, ECC_GATEGUARD) where unset"
 }
 
 # Installs ECC's statusline, which shows more than the inline bash bar it

@@ -325,13 +325,19 @@ silent-failure-hunter, code-simplifier):
 
 - Every entry in `hooks/hooks.json` is tagged `standard,strict`, so profile
   `minimal` runs none of them — including GateGuard.
+- `ECC_GATEGUARD` accepts `0`, `false`, `off`, `disabled`, or `disable`
+  (`ECC_DISABLE_VALUES` in `gateguard-fact-force.js`), matched after trimming
+  and lowercasing. `isGateGuardDisabled()` is called once at the top of
+  `run()`, before any branching, so one value covers both the Bash and the
+  Edit/Write gate — no need to list the two hook ids separately.
 - `GATEGUARD_BASH_ROUTINE_DISABLED=1` drops only the once-per-session routine
-  Bash gate and keeps the destructive-command gate.
+  Bash gate and keeps the destructive-command gate. Superseded here by
+  `ECC_GATEGUARD=off`; it is a narrower switch on a gate now off entirely.
 
 ### Disabled in this setup
 
 All set in `~/.claude/settings.json` — the `ECC_DISABLED_HOOKS` and
-`GATEGUARD_*` entries under `env`, the matcher change on its hook entry:
+`ECC_GATEGUARD` entries under `env`, the matcher change on its hook entry:
 
 | Setting | Effect | Reason |
 | --- | --- | --- |
@@ -345,7 +351,7 @@ All set in `~/.claude/settings.json` — the `ECC_DISABLED_HOOKS` and
 | `ECC_DISABLED_HOOKS=…,stop:cost-tracker` | Stops writing `~/.claude/metrics/costs.jsonl` and computing `total_cost_usd` | LOCAL (thaint): on a Claude.ai subscription nothing is billed per token, so the `$` figures this feeds are noise, not signal — `ecc-context-monitor`'s COST NOTICE/WARNING/CRITICAL reminders and the statusline's `$` fallback (`ecc-statusline.js`, `rate-limit-format.js`) both read from this hook's output via `ecc-metrics-bridge`, so disabling it here silences both at the source instead of patching each reader separately |
 | `ECC_DISABLED_HOOKS=…,post:bash:build-complete` | Drops the post-build notice | Prints "Build completed - async analysis running in background" while no such analysis exists anywhere in the file. Same class as `pre:bash:git-push-reminder`: announcing work it does not do is worse than silence, because the agent may wait on it |
 | `ECC_DISABLED_HOOKS=…,stop:evaluate-session` | Drops the per-turn pattern-extraction nag | It writes nothing at all — no file, no `additionalContext`. It parses the full transcript on every Stop only to print a stderr suggestion to look for extractable patterns. The actual extraction is the hand-run `/learn` command, unaffected. `stop:session-end` keeps doing the real transcript work |
-| `GATEGUARD_BASH_ROUTINE_DISABLED=1` | Drops the routine Bash gate, keeps the destructive gate | The routine gate costs a model round trip per firing to restate the request. "Once per session" is really once per 30-minute idle window — GateGuard's state expires on `SESSION_TIMEOUT_MS`, so it re-fires in long sessions. The destructive gate is where the value is: a rollback line before `rm -rf` or `git push --force` |
+| `ECC_GATEGUARD=off` | Drops GateGuard entirely — routine Bash, destructive Bash, and the per-file Edit/Write gate | LOCAL (thaint): replaces the earlier `GATEGUARD_BASH_ROUTINE_DISABLED=1`, which kept the destructive and Edit/Write gates on the theory that those were where the value sat. Measured over one full session that did not hold: 7 denials, 1 useful. The one hit was the Edit/Write gate surfacing a second test file asserting on the file being rewritten. The other 6 were read-only `find`/`ls`, scratch files under the job tmp dir, overwrites of existing files — where the "confirm no existing file serves the same purpose" prompt is self-contradictory — and a `git checkout --` revert already caught by the `git diff --stat` habit in CLAUDE.md, not by the gate. Cost is not only the round trip: every denial forces a facts block into the transcript, spending the context the gate exists to protect, and that session hit 85% of the window. Its own suite is 129 pass / **15 fail**, so shipped behaviour does not match its spec. Re-enable per session with `ECC_GATEGUARD=on`; `GATEGUARD_EXEMPT_GLOBS` is the narrower alternative if only the tmp-file noise needs to go |
 
 `stop:desktop-notify` was already disabled before this. After these changes, a
 read-only tool call (`Read`, `Grep`, `Glob`) runs zero PreToolUse hooks.
