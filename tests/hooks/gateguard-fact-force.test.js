@@ -13,6 +13,14 @@ const hookScript = path.join(__dirname, '..', '..', 'scripts', 'hooks', 'gategua
 // These tests pin the session id via the legacy CLAUDE_SESSION_ID; run-all.js
 // scrubs the real one for suite runs, this covers standalone runs.
 delete process.env.CLAUDE_CODE_SESSION_ID;
+// Same reasoning for the gate's own off-switches. setup_claude.sh writes
+// ECC_GATEGUARD=off into settings.json, so every Claude Code session exports it
+// and the hook would return early — 106 of these assertions fail against a gate
+// that never ran. A test for a hook has to own the switches that disable it.
+delete process.env.ECC_GATEGUARD;
+delete process.env.GATEGUARD_DISABLED;
+delete process.env.GATEGUARD_BASH_ROUTINE_DISABLED;
+delete process.env.ECC_DISABLED_HOOKS;
 const externalStateDir = process.env.GATEGUARD_STATE_DIR;
 const tmpRoot = process.env.TMPDIR || process.env.TEMP || process.env.TMP || '/tmp';
 const baseStateDir = externalStateDir || tmpRoot;
