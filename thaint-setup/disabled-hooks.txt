@@ -1,0 +1,64 @@
+# This fork's hook-audit defaults for env.ECC_DISABLED_HOOKS, applied by
+# ensure_ecc_hook_config() in setup_claude.sh. One hook id per line, in the
+# exact order they are joined into the comma-separated env value — an
+# existing install compares that value for exact equality, so order and set
+# both matter. Full rationale: thaint-setup/HOOK-CATALOG.md, "Turning hooks
+# off".
+
+stop:desktop-notify
+# see thaint-setup/HOOK-CATALOG.md
+
+pre:bash:git-push-reminder
+# Unfinished stub — fires on every push and changes nothing; its own second
+# line says to remove the hook for real review.
+
+pre:observe
+# Empty shell: delegates to skills/continuous-learning-v2/hooks/observe.sh,
+# which is not installed under ~/.claude — every tool call spawned a process
+# that exited with "script not found".
+
+post:observe:continuous-learning
+# Paired with pre:observe above — same empty-shell rationale.
+
+pre:governance-capture
+# Off by default anyway (governance-capture.js requires
+# ECC_GOVERNANCE_CAPTURE=1, unset here); what it would log overlaps hooks
+# that already block: secrets -> pre:bash:commit-quality, destructive
+# commands -> GateGuard.
+
+post:governance-capture
+# Paired with pre:governance-capture above — same rationale.
+
+post:edit:console-warn
+# Duplicate of stop:check-console-log, which is the better place for it: a
+# console.log in a file still being edited is normal, so the per-edit
+# warning fires while the condition is expected.
+
+post:session-activity-tracker
+# Nothing consumes ~/.claude/metrics/tool-usage.jsonl automatically; the only
+# reader is a hand-run CLI gate (scripts/observability-readiness.js).
+
+post:bash:command-log-audit
+# Near-duplicate log with no consumer (paired with command-log-cost below);
+# bash-commands.log had reached 31,925 lines with no reader anywhere in the
+# tree besides the writer and its own tests.
+
+post:bash:command-log-cost
+# Paired with post:bash:command-log-audit above — same no-consumer
+# rationale; cost-tracker.log holds no cost data despite the name, real cost
+# accounting is the unrelated stop:cost-tracker.
+
+post:bash:build-complete
+# Announces "async analysis running in background" while no such analysis
+# exists anywhere in the file — worse than silence.
+
+stop:evaluate-session
+# Writes nothing at all; only prints a stderr suggestion to look for
+# extractable patterns. Real extraction is the hand-run /learn command.
+
+stop:cost-tracker
+# LOCAL (thaint): on a Claude.ai subscription nothing is billed per token,
+# so the $ figures this computes are noise, not signal. ecc-context-monitor's
+# COST NOTICE/WARNING/CRITICAL reminders and the statusline's $ fallback both
+# read from this hook's output (via ecc-metrics-bridge), so disabling it here
+# silences both instead of patching each reader separately.

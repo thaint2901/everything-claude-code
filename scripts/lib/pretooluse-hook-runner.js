@@ -1,0 +1,226 @@
+#!/usr/bin/env node
+/**
+ * Generic in-process runner for a chain of PreToolUse hook members.
+ *
+ * Shared by both consolidated PreToolUse dispatchers: bash-hook-dispatcher.js
+ * (Bash) and edit-write-hook-dispatcher.js (Edit/Write/MultiEdit). Extracted
+ * here so neither duplicates the normalize/loop logic.
+ *
+ * The isJsonDeny() mid-chain check below matters whenever a hard-denial-
+ * capable hook (gateguard-fact-force) could be followed by another member
+ * that would otherwise receive its deny JSON as if it were the original
+ * tool-input event. edit-write-hook-dispatcher.js's required order puts
+ * gateguard-fact-force BEFORE an advisory-only hook (doc-file-warning), so a
+ * plain exitCode!==0 check would not be enough there. bash-hook-dispatcher.js
+ * keeps gateguard-fact-force last in PRE_BASH_HOOKS, which makes the check a
+ * no-op for Bash today — that ordering is enforced structurally (a load-time
+ * assertion in bash-hook-dispatcher.js throws if it's ever violated), not
+ * left as a comment-only invariant.
+ */
+
+'use strict';
+
+const { isHookEnabled, isDryRun } = require('./hook-flags');
+const {
+  buildPreToolUseAdditionalContext,
+  combineAdditionalContext,
+} = require('../hooks/pretooluse-visible-output');
+
+/**
+ * Detect a PreToolUse JSON deny payload:
+ *   { hookSpecificOutput: { permissionDecision: 'deny', ... } }
+ *
+ * A member hook (e.g. gateguard-fact-force) signals "deny" via this JSON
+ * shape on stdout while still exiting 0. A plain exitCode check misses it —
+ * without this, a later advisory-only member in the chain would receive the
+ * deny JSON as if it were the original tool-input event.
+ */
+function isJsonDeny(text) {
+  if (typeof text !== 'string' || !text.trim()) return false;
+  try {
+    const parsed = JSON.parse(text);
+    return !!(parsed && parsed.hookSpecificOutput && parsed.hookSpecificOutput.permissionDecision === 'deny');
+  } catch {
+    return false;
+  }
+}
+
+function normalizeHookResult(previousRaw, output) {
+  if (typeof output === 'string' || Buffer.isBuffer(output)) {
+    return {
+      raw: String(output),
+      stderr: '',
+      exitCode: 0,
+    };
+  }
+
+  if (output && typeof output === 'object') {
+    const nextRaw = Object.prototype.hasOwnProperty.call(output, 'additionalContext')
+      ? previousRaw
+      : Object.prototype.hasOwnProperty.call(output, 'stdout')
+      ? String(output.stdout ?? '')
+      : !Number.isInteger(output.exitCode) || output.exitCode === 0
+        ? previousRaw
+        : '';
+
+    return {
+      raw: nextRaw,
+      stderr: typeof output.stderr === 'string' ? output.stderr : '',
+      additionalContext: output.additionalContext,
+      exitCode: Number.isInteger(output.exitCode) ? output.exitCode : 0,
+    };
+  }
+
+  return {
+    raw: previousRaw,
+    stderr: '',
+    exitCode: 0,
+  };
+}
+
+/**
+ * Run an ordered list of PreToolUse hook members in one process.
+ *
+ * Each entry: { id, profiles, critical?, run(rawInput, options) }. Per-member
+ * gating via isHookEnabled() (ECC_HOOK_PROFILE / ECC_DISABLED_HOOKS) happens
+ * before a member runs. The first member that denies (non-zero exitCode, OR a
+ * JSON hookSpecificOutput.permissionDecision === 'deny' payload at exitCode 0)
+ * short-circuits the chain immediately.
+ *
+ * A member that throws is contained. For an advisory-only member (no
+ * `critical` flag) this is fail-open — logged to stderr, remaining members
+ * still run. For a `critical: true` member (a hard-denial-capable check like
+ * config-protection or gateguard-fact-force), a throw instead fails closed:
+ * the chain denies immediately (exitCode 2) rather than silently skipping the
+ * check that couldn't run, because letting the operation through with no
+ * visible signal would be a silent security bypass.
+ *
+ * @param {string} rawInput
+ * @param {Array<{id: string, profiles?: string, critical?: boolean, run: Function}>} hooks
+ * @param {object} [options] passed through as the second arg to each member's run()
+ */
+function extractPreviewContext(raw) {
+  try {
+    const payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (payload && typeof payload === 'object') {
+      const input = payload.tool_input;
+      return {
+        tool: String(payload.tool_name || ''),
+        filePath: input && typeof input === 'object' ? String(input.file_path || input.path || '') : '',
+      };
+    }
+  } catch {
+    // best-effort preview context; ignore malformed input
+  }
+  return { tool: '', filePath: '' };
+}
+
+/**
+ * Under ECC_DRY_RUN=1, preview every enabled member instead of running any
+ * of them — mirrors run-with-flags.js's isDryRun() gate, which this chain
+ * bypasses entirely now that config-protection/gateguard-fact-force are
+ * folded behind this in-process runner instead of individual hooks.json
+ * entries routed through run-with-flags.js.
+ */
+function runDryRunPreview(rawInput, hooks) {
+  const ctx = extractPreviewContext(rawInput);
+  let stderr = '';
+  for (const hook of hooks) {
+    if (!isHookEnabled(hook.id, { profiles: hook.profiles })) continue;
+    stderr += `[DryRun] Hook "${hook.id}" would execute (enabled=true, profiles=${hook.profiles || 'default'})`;
+    if (ctx.tool) stderr += ` tool=${ctx.tool}`;
+    if (ctx.filePath) stderr += ` target=${ctx.filePath}`;
+    stderr += '\n';
+  }
+  return { output: '', stderr, additionalContext: '', exitCode: 0 };
+}
+
+function runHooks(rawInput, hooks, options = {}) {
+  if (isDryRun()) {
+    return runDryRunPreview(rawInput, hooks);
+  }
+
+  let currentRaw = rawInput;
+  let rawModified = false;
+  let stderr = '';
+  let additionalContext = '';
+
+  for (const hook of hooks) {
+    if (!isHookEnabled(hook.id, { profiles: hook.profiles })) {
+      continue;
+    }
+
+    try {
+      const result = normalizeHookResult(currentRaw, hook.run(currentRaw, options));
+      const denied = result.exitCode !== 0 || isJsonDeny(result.raw);
+
+      if (result.raw !== currentRaw) {
+        rawModified = true;
+      }
+      currentRaw = result.raw;
+      if (result.stderr) {
+        stderr += result.stderr.endsWith('\n') ? result.stderr : `${result.stderr}\n`;
+      }
+      if (result.additionalContext) {
+        additionalContext = combineAdditionalContext(additionalContext, result.additionalContext);
+      }
+      if (denied) {
+        return {
+          output: rawModified ? currentRaw : '',
+          stderr,
+          additionalContext,
+          exitCode: result.exitCode,
+        };
+      }
+    } catch (error) {
+      stderr += `[Hook] ${hook.id} failed: ${error.message}\n`;
+      if (hook.critical) {
+        stderr += `[Hook] ${hook.id} is a security-relevant check; denying this operation because it could not run safely.\n`;
+        return {
+          output: rawModified ? currentRaw : '',
+          stderr,
+          additionalContext,
+          exitCode: 2,
+        };
+      }
+    }
+  }
+
+  return {
+    output: additionalContext
+      ? buildPreToolUseAdditionalContext(additionalContext)
+      : rawModified
+        ? currentRaw
+        : '',
+    stderr,
+    additionalContext,
+    exitCode: 0,
+  };
+}
+
+/**
+ * Fail-open-by-omission guard: `hook.critical` being `undefined` is
+ * indistinguishable from `critical: false` inside runHooks()'s catch block —
+ * both route to the advisory (fail-open) branch. This asserts every member of
+ * a PreToolUse chain explicitly declares `critical: true` or `critical:
+ * false`, so a future hard-denial-capable hook added without the flag fails
+ * at load time instead of silently failing open the first time it throws.
+ *
+ * @param {Array<{id: string, critical?: boolean}>} hooks
+ */
+function assertCriticalDeclared(hooks) {
+  const missing = hooks.filter(hook => !Object.prototype.hasOwnProperty.call(hook, 'critical'));
+  if (missing.length) {
+    throw new Error(
+      `every PreToolUse chain member must explicitly declare critical: true or critical: false — missing on: ${missing.map(h => h.id).join(', ')}. ` +
+      'An omitted field silently defaults to fail-open if that member throws.'
+    );
+  }
+}
+
+module.exports = {
+  runHooks,
+  normalizeHookResult,
+  isJsonDeny,
+  assertCriticalDeclared,
+};

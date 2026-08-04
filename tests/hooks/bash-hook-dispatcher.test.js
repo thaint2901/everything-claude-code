@@ -126,6 +126,100 @@ function runTests() {
     assert.ok(result.stderr.includes('gh pr review 42 --repo owner/repo'));
   })) passed++; else failed++;
 
+  if (test('a throwing gateguard-fact-force fails closed in the Bash chain (critical: true)', () => {
+    const gateguardPath = require.resolve('../../scripts/hooks/gateguard-fact-force');
+    const dispatcherPath = require.resolve('../../scripts/hooks/bash-hook-dispatcher');
+
+    delete require.cache[gateguardPath];
+    delete require.cache[dispatcherPath];
+
+    const gateguardModule = require(gateguardPath);
+    const originalRun = gateguardModule.run;
+    // Synthetic crash, mirroring the same caveat in
+    // pre-edit-write-dispatcher.test.js: proves the fail-closed mechanism
+    // engages on a throw, not that a specific realistic failure triggers one.
+    gateguardModule.run = () => {
+      throw new Error('simulated gateguard-fact-force failure');
+    };
+
+    try {
+      const { runPreBash } = require(dispatcherPath);
+      const rawInput = JSON.stringify({ tool_input: { command: 'echo hi' } });
+      const result = runPreBash(rawInput);
+
+      // Before this fix, gateguard-fact-force had no `critical` flag in the
+      // Bash chain, so a crash here fell through to exitCode 0 (fail open) —
+      // the same class of silent security bypass fixed for Edit/Write in
+      // 9a9da355, just not applied to this dispatcher.
+      assert.ok(result.stderr.includes('pre:bash:gateguard-fact-force'), `expected contained error in stderr, got: ${result.stderr}`);
+      assert.ok(result.stderr.includes('simulated gateguard-fact-force failure'), `expected error message in stderr, got: ${result.stderr}`);
+      assert.ok(/denying this operation/.test(result.stderr), `expected fail-closed explanation in stderr, got: ${result.stderr}`);
+      assert.strictEqual(result.exitCode, 2, 'a critical member crash must deny (exitCode 2), not fail open');
+    } finally {
+      gateguardModule.run = originalRun;
+      delete require.cache[gateguardPath];
+      delete require.cache[dispatcherPath];
+    }
+  })) passed++; else failed++;
+
+  if (test('assertGateguardLast throws if gateguard-fact-force is reordered before another hook', () => {
+    const { assertGateguardLast } = require('../../scripts/hooks/bash-hook-dispatcher');
+
+    assert.doesNotThrow(() => assertGateguardLast([
+      { id: 'pre:bash:block-no-verify' },
+      { id: 'pre:bash:gateguard-fact-force' },
+    ]), 'gateguard-fact-force last should be fine');
+
+    assert.throws(
+      () => assertGateguardLast([
+        { id: 'pre:bash:gateguard-fact-force' },
+        { id: 'pre:bash:block-no-verify' },
+      ]),
+      /must be the last entry in PRE_BASH_HOOKS/,
+      'reordering gateguard-fact-force before another hook must throw'
+    );
+
+    assert.doesNotThrow(() => assertGateguardLast([
+      { id: 'pre:bash:block-no-verify' },
+    ]), 'an array without gateguard-fact-force at all should be fine');
+  })) passed++; else failed++;
+
+  if (test('the real PRE_BASH_HOOKS array declares critical on every entry (load-time guard)', () => {
+    // PRE_BASH_HOOKS/assertCriticalDeclared already ran once as a side effect
+    // of the require() above (assertCriticalDeclared throws at load time if
+    // any entry omits `critical`) — requiring successfully here IS the
+    // assertion. Re-run it explicitly too so the failure message names the
+    // offending hook id instead of just "module load failed".
+    const { PRE_BASH_HOOKS } = require('../../scripts/hooks/bash-hook-dispatcher');
+    const { assertCriticalDeclared } = require('../../scripts/lib/pretooluse-hook-runner');
+    assert.doesNotThrow(
+      () => assertCriticalDeclared(PRE_BASH_HOOKS),
+      'a future PRE_BASH_HOOKS entry added without an explicit critical: true/false must fail CI at load time, not silently fail open'
+    );
+  })) passed++; else failed++;
+
+  if (test('pre-bash-dispatcher.js denies destructive Bash via gateguard-fact-force (live route, not run-with-flags.js)', () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-gateguard-bash-live-'));
+    const sessionId = `gateguard-bash-live-${process.pid}-${Date.now()}`;
+    const env = { GATEGUARD_STATE_DIR: stateDir, CLAUDE_SESSION_ID: sessionId };
+    const input = { tool_name: 'Bash', tool_input: { command: 'rm -rf /important/data' } };
+
+    try {
+      const first = runScript(preDispatcher, input, env);
+      assert.strictEqual(first.status, 0, 'gateguard denies via JSON payload at exit 0, not a nonzero exit');
+      const output1 = parseHookOutput(first.stdout);
+      assert.strictEqual(output1.hookSpecificOutput.permissionDecision, 'deny', `expected first destructive Bash call to deny, got: ${first.stdout}`);
+
+      const second = runScript(preDispatcher, input, env);
+      assert.strictEqual(second.status, 0);
+      const output2 = second.stdout.trim() ? parseHookOutput(second.stdout) : null;
+      const stillDenied = output2 && output2.hookSpecificOutput && output2.hookSpecificOutput.permissionDecision === 'deny';
+      assert.ok(!stillDenied, `expected retry after facts presented to be allowed, got: ${second.stdout}`);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  })) passed++; else failed++;
+
   console.log(`\nResults: Passed: ${passed}, Failed: ${failed}`);
   process.exit(failed > 0 ? 1 : 0);
 }

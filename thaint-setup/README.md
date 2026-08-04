@@ -41,14 +41,15 @@ In the order `main()` runs them:
    - `skills/strategic-compact`
 8. **Installs hooks-runtime** — runs the ECC `install.sh`, which copies the hook scripts without wiring them to any event
 9. **Wires the hook graph** — merges `hooks/hooks.json` into `.hooks` of `settings.json`, the only place Claude Code reads hooks from; keeps entries the graph does not carry, and skips itself when ECC is installed as a plugin
-10. **Patches `settings.json`** — points `statusLine` at `~/.claude/scripts/hooks/ecc-statusline.js` (model, task, 5-hour budget, session counters, directory, context bar), keeping one you set by hand:
+10. **Applies this fork's hook-audit env defaults** — sets `env.ECC_DISABLED_HOOKS` and `env.GATEGUARD_BASH_ROUTINE_DISABLED` in `settings.json`, only if unset (an existing value is kept, with a warning if it differs); see `thaint-setup/HOOK-CATALOG.md` for the rationale behind each disabled hook
+11. **Patches `settings.json`** — points `statusLine` at `~/.claude/scripts/hooks/ecc-statusline.js` (model, task, 5-hour budget, session counters, directory, context bar), keeping one you set by hand:
 
     ```text
     Opus 5 (1M context) │ 5h 24% ↻1h11m 96t 11f 1h39m │ my-worktree ████░░░░░░ 46%
     ```
 
-11. **Installs Telegram hook** — writes `~/.claude/scripts/hooks/telegram-notify.js` and patches `settings.json`
-12. **Patches shell rc** (`.zshrc` or `.bashrc`) — adds convenience alias and env var:
+12. **Installs Telegram hook** — writes `~/.claude/scripts/hooks/telegram-notify.js` and patches `settings.json`
+13. **Patches shell rc** (`.zshrc` or `.bashrc`) — adds convenience alias and env var:
    ```bash
    alias clauded='claude --dangerously-skip-permissions'
    export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1

@@ -80,6 +80,114 @@ function runTests() {
     passed++;
   else failed++;
 
+  // LOCAL (thaint): delegation reminder — fires once window usage reaches
+  // DELEGATION_MIN_USED_PCT (35% used), long before the context warnings.
+  console.log('\nevaluateConditions (delegation):');
+
+  if (
+    test('remaining 30% (70% used, past the delegation floor) includes a delegation reminder', () => {
+      const warnings = evaluateConditions({ context_remaining_pct: 30 });
+      const delegation = warnings.find(w => w.type === 'delegation');
+      assert.ok(delegation, 'Expected a delegation warning');
+      assert.ok(delegation.message.includes('~70% used'), 'Message should round usage to the 10-point step');
+      assert.ok(delegation.message.includes('[Delegation]'), 'Message should be tagged [Delegation]');
+      assert.ok(delegation.message.includes('subagent'), 'Message should mention subagent');
+      assert.ok(delegation.message.includes('fork'), 'Message should mention fork');
+      assert.ok(delegation.message.includes('CLAUDE.md'), 'Message should reference CLAUDE.md');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('remaining 20% (critical) also includes a delegation reminder', () => {
+      const warnings = evaluateConditions({ context_remaining_pct: 20 });
+      const delegation = warnings.find(w => w.type === 'delegation');
+      assert.ok(delegation, 'Expected a delegation warning at critical level too');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('remaining 70% (30% used, below the delegation floor) has no delegation reminder', () => {
+      const warnings = evaluateConditions({ context_remaining_pct: 70 });
+      const delegation = warnings.find(w => w.type === 'delegation');
+      assert.strictEqual(delegation, undefined);
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('remaining 65% (exactly 35% used) fires, and 55% used rounds to a new ~50% step', () => {
+      const atFloor = evaluateConditions({ context_remaining_pct: 65 }).find(w => w.type === 'delegation');
+      assert.ok(atFloor, 'Expected the reminder exactly at the 35%-used floor');
+      assert.ok(atFloor.message.includes('~30% used'), ': 35 used floors to the ~30% step');
+      const nextStep = evaluateConditions({ context_remaining_pct: 45 }).find(w => w.type === 'delegation');
+      assert.ok(nextStep.message.includes('~50% used'), '55 used floors to the ~50% step');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('run() surfaces the delegation reminder once context crosses the threshold, then suppresses the repeat', () => {
+      const sessionId = `ctx-monitor-delegation-${process.pid}-${Date.now()}`;
+      const input = JSON.stringify({ session_id: sessionId, tool_name: 'Bash' });
+      const warnPath = path.join(os.tmpdir(), `ecc-ctx-warn-${sessionId}.json`);
+      try {
+        writeBridgeAtomic(sessionId, {
+          context_remaining_pct: 30,
+          last_timestamp: new Date().toISOString()
+        });
+        const first = JSON.parse(run(input));
+        const firstMessage = first.hookSpecificOutput.additionalContext;
+        assert.ok(firstMessage.includes('[Delegation]'), `Expected delegation reminder on first call. Got: ${firstMessage}`);
+
+        // Same bridge state on the next call at the same level — the
+        // reminder text is unchanged, so the existing message-dedupe
+        // (readWarnState/writeWarnState) must suppress the repeat.
+        const second = run(input);
+        assert.strictEqual(second, input, `Expected the repeat to be suppressed. Got: ${second}`);
+      } finally {
+        fs.rmSync(getBridgePath(sessionId), { force: true });
+        fs.rmSync(warnPath, { force: true });
+      }
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('run() fails open (no output, no crash) when the bridge file is missing', () => {
+      const sessionId = `ctx-monitor-missing-bridge-${process.pid}-${Date.now()}`;
+      const input = JSON.stringify({ session_id: sessionId, tool_name: 'Bash' });
+      // No writeBridgeAtomic call — bridge file does not exist for this session.
+      const result = run(input);
+      assert.strictEqual(result, input, `Expected pass-through on missing bridge. Got: ${result}`);
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('run() fails open (no output, no crash) when the bridge file is corrupt', () => {
+      const sessionId = `ctx-monitor-corrupt-bridge-${process.pid}-${Date.now()}`;
+      const input = JSON.stringify({ session_id: sessionId, tool_name: 'Bash' });
+      const bridgePath = getBridgePath(sessionId);
+      fs.writeFileSync(bridgePath, 'not-json{{{', 'utf8');
+      try {
+        const result = run(input);
+        assert.strictEqual(result, input, `Expected pass-through on corrupt bridge. Got: ${result}`);
+      } finally {
+        fs.rmSync(bridgePath, { force: true });
+      }
+    })
+  )
+    passed++;
+  else failed++;
+
   // evaluateConditions — cost warnings
   console.log('\nevaluateConditions (cost):');
 

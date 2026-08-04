@@ -9,9 +9,8 @@
  * session file for cross-session continuity.
  */
 
-const path = require('path');
 const fs = require('fs');
-const { getSessionsDir, getDateString, getTimeString, getSessionIdShort, sanitizeSessionId, getProjectName, ensureDir, readFile, writeFile, runCommand, stripAnsi, log } = require('../lib/utils');
+const { getSessionsDir, getDateString, getTimeString, getCurrentSessionFilePath, getProjectName, ensureDir, readFile, writeFile, runCommand, stripAnsi, log } = require('../lib/utils');
 const { generateSessionSummary, getContextRemainingPct, getContextThreshold } = require('../lib/llm-summary');
 
 const SUMMARY_START_MARKER = '<!-- ECC:SUMMARY:START -->';
@@ -183,28 +182,11 @@ async function main() {
 
   const sessionsDir = getSessionsDir();
   const today = getDateString();
-  // Derive shortId from transcript_path UUID when available, using the SAME
-  // last-8-chars convention as getSessionIdShort(sessionId.slice(-8)). This keeps
-  // backward compatibility for normal sessions (the derived shortId matches what
-  // getSessionIdShort() would have produced from the same UUID), while making
-  // every session map to a unique filename based on its own transcript UUID.
-  //
-  // Without this, a parent session and any `claude -p ...` subprocess spawned by
-  // another Stop hook share the project-name fallback filename, and the subprocess
-  // overwrites the parent's summary. See issue #1494 for full repro details.
-  let shortId = null;
-  if (transcriptPath) {
-    const m = path.basename(transcriptPath).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i);
-    if (m) {
-      // Run through sanitizeSessionId() for byte-for-byte parity with
-      // getSessionIdShort(sessionId.slice(-8)).
-      shortId = sanitizeSessionId(m[1].slice(-8).toLowerCase());
-    }
-  }
-  if (!shortId) {
-    shortId = getSessionIdShort();
-  }
-  const sessionFile = path.join(sessionsDir, `${today}-${shortId}-session.tmp`);
+  // Derivation shared with pre-compact.js via getCurrentSessionFilePath() so
+  // both hooks agree on the same file — see that function's doc comment in
+  // scripts/lib/utils.js for the rationale (issue #1494) and
+  // tests/hooks/pre-compact.test.js for the enforced-parity test.
+  const sessionFile = getCurrentSessionFilePath(transcriptPath);
   const sessionMetadata = getSessionMetadata();
 
   ensureDir(sessionsDir);

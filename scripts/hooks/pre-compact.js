@@ -14,7 +14,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { getSessionsDir, getDateTimeString, getTimeString, findFiles, ensureDir, appendFile, readFile, writeFile, log } = require('../lib/utils');
+const { getSessionsDir, getDateTimeString, getTimeString, getCurrentSessionFilePath, ensureDir, appendFile, readFile, writeFile, log } = require('../lib/utils');
 const { generateSessionSummary } = require('../lib/llm-summary');
 
 const SUMMARY_START_MARKER = '<!-- ECC:SUMMARY:START -->';
@@ -60,14 +60,22 @@ async function main() {
   const timestamp = getDateTimeString();
   appendFile(compactionLog, `[${timestamp}] Context compaction triggered\n`);
 
-  const sessions = findFiles(sessionsDir, '*-session.tmp');
-  if (sessions.length === 0) {
-    log('[PreCompact] No active session file found');
-    process.exit(0);
-  }
-
-  const activeSession = sessions[0].path;
+  // Target the SAME file session-end.js derives for this session (via the
+  // shared getCurrentSessionFilePath helper) instead of scanning the sessions
+  // dir for the globally most-recently-modified file. The old approach could
+  // write a compaction summary into an unrelated session's — or even a
+  // different project's — file whenever multiple sessions ran in parallel.
+  const activeSession = getCurrentSessionFilePath(transcriptPath);
   const timeStr = getTimeString();
+
+  // The current session's file may not exist yet if compaction fires before
+  // any Stop event has run for this session. We create it (appendFile/
+  // writeFile below already create missing files) rather than no-op, so the
+  // compaction summary isn't silently dropped; session-end.js's header-merge
+  // logic normalizes the file's header on the next Stop event.
+  if (!fs.existsSync(activeSession)) {
+    log(`[PreCompact] Session file does not exist yet; creating ${activeSession}`);
+  }
 
   if (!transcriptPath || !fs.existsSync(transcriptPath)) {
     appendFile(activeSession, `\n---\n**[Compaction occurred at ${timeStr}]** - Context was summarized\n`);

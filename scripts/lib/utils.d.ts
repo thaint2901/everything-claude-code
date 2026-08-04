@@ -73,6 +73,12 @@ export function sanitizeSessionId(raw: string | null | undefined): string | null
  */
 export function getSessionIdShort(fallback?: string): string;
 
+/**
+ * Derive the path of the current session's session-data file. Shared by
+ * session-end.js and pre-compact.js so both hooks agree on the same file.
+ */
+export function getCurrentSessionFilePath(transcriptPath: string | null | undefined): string;
+
 /** Get the git repository name from the current working directory */
 export function getGitRepoName(): string | null;
 

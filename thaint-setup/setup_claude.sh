@@ -73,7 +73,9 @@ End-to-end Claude Code setup. Installs (always overwrites) into ${CLAUDE_HOME}:
   claude-code CLI (if missing), skip-onboarding flag in ~/.claude.json,
   marketplace + plugin ${CLAUDE_PLUGIN} (if missing),
   agents, commands, hooks-runtime, configure-ecc, strategic-compact, telegram-hook,
-  ECC statusline (.statusLine; a hand-edited value is kept as-is)
+  ECC statusline (.statusLine; a hand-edited value is kept as-is),
+  this fork's hook-audit env defaults (ECC_DISABLED_HOOKS,
+  GATEGUARD_BASH_ROUTINE_DISABLED — only set if unset)
 Shell rc patch (.zshrc or .bashrc):
   alias clauded='claude --dangerously-skip-permissions'
   export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
@@ -274,7 +276,7 @@ install_telegram_hook() {
     printf '[dry-run] write %s (chmod 700)\n' "$hook_js"
   else
     run mkdir -p "$hook_dir"
-    telegram_js_source > "$hook_js"
+    cp "${SCRIPT_DIR}/telegram-notify.js" "$hook_js"
     chmod 700 "$hook_js"
   fi
 
@@ -372,6 +374,26 @@ patch_settings_telegram() {
 # never added: insaits-security is opt-in, telegram-notify belongs to
 # install_telegram_hook.
 readonly GRAPH_EXEMPT='["insaits-security","telegram-notify"]'
+
+# This fork's hook-audit defaults (see thaint-setup/HOOK-CATALOG.md, "Turning
+# hooks off" — each id there has its own rationale: dead code, duplicate of
+# another hook, or an unfinished stub). Applied so a fresh install starts from
+# the same audited defaults instead of running every hook the upstream graph
+# ships. The list itself lives in disabled-hooks.txt (one id per line, `#`
+# comments and blank lines ignored) so adding or dropping a hook is a data
+# edit, not a bash edit.
+#
+# Captured into a plain variable before `readonly`, not `readonly VAR="$(cmd)"`
+# directly: bash's readonly/declare/local assignment exit status doesn't
+# propagate an inner command substitution's failure to `set -e` (verified:
+# `bash -c 'set -e; readonly X="$(false)"; echo reached'` prints "reached" and
+# exits 0). The explicit `|| die` below is what actually catches a
+# disabled-hooks.txt that filters down to zero active lines.
+[[ -f "${SCRIPT_DIR}/disabled-hooks.txt" ]] || die "disabled-hooks.txt missing at ${SCRIPT_DIR}/disabled-hooks.txt"
+ecc_disabled_hooks_default="$(grep -v '^[[:space:]]*#' "${SCRIPT_DIR}/disabled-hooks.txt" | grep -v '^[[:space:]]*$' | paste -sd, -)" \
+  || die "disabled-hooks.txt at ${SCRIPT_DIR}/disabled-hooks.txt has no active hook entries (all lines are comments/blank) — refusing to silently disable nothing"
+readonly ECC_DISABLED_HOOKS_DEFAULT="$ecc_disabled_hooks_default"
+readonly GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT="1"
 
 # Wires hooks/hooks.json into settings.json, the only place Claude Code reads
 # hooks from. The ECC installer copies the hook scripts and writes the same graph
@@ -477,6 +499,57 @@ install_hook_graph() {
   log "wired hook graph ($(jq '[.hooks[][].hooks[]] | length' "$settings") entries in settings.json)"
 }
 
+# Splits a comma-separated hook-id list into a sorted, deduped, comma-joined
+# form so two lists differing only in order/duplicates compare as equal.
+normalize_hook_list() {
+  printf '%s' "$1" | tr ',' '\n' | sort -u | paste -sd, -
+}
+
+# Applies this fork's hook-audit defaults (ECC_DISABLED_HOOKS,
+# GATEGUARD_BASH_ROUTINE_DISABLED) to settings.json's env block. Only sets a
+# key that is absent — an existing value is assumed to be a deliberate choice
+# (yours, or a previous run's) and is left alone, same as the statusLine
+# hand-edit check below.
+ensure_ecc_hook_config() {
+  local settings="${CLAUDE_HOME}/settings.json"
+
+  if (( DRY_RUN )); then
+    printf '[dry-run] patch %s (env.ECC_DISABLED_HOOKS, env.GATEGUARD_BASH_ROUTINE_DISABLED — only if unset)\n' "$settings"
+    return
+  fi
+
+  [[ -f "$settings" ]] || printf '{}\n' > "$settings"
+
+  local existing_disabled existing_gateguard
+  existing_disabled="$(jq -r '.env.ECC_DISABLED_HOOKS // ""' "$settings")"
+  existing_gateguard="$(jq -r '.env.GATEGUARD_BASH_ROUTINE_DISABLED // ""' "$settings")"
+
+  # Compared as normalized sets, not raw strings: the actual runtime behavior
+  # (hook-flags.js's getDisabledHookIds() splits on `,` into a Set) never
+  # depends on order, so a pure reorder of disabled-hooks.txt must not warn
+  # every existing install about a "different value" that changes nothing.
+  if [[ -n "$existing_disabled" \
+        && "$(normalize_hook_list "$existing_disabled")" != "$(normalize_hook_list "$ECC_DISABLED_HOOKS_DEFAULT")" ]]; then
+    warn "env.ECC_DISABLED_HOOKS already set to a different value — keeping it (see thaint-setup/HOOK-CATALOG.md for this fork's defaults)"
+  fi
+  if [[ -n "$existing_gateguard" && "$existing_gateguard" != "$GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT" ]]; then
+    warn "env.GATEGUARD_BASH_ROUTINE_DISABLED already set to a different value — keeping it"
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  jq \
+    --arg disabled "$ECC_DISABLED_HOOKS_DEFAULT" \
+    --arg gateguard "$GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT" \
+    '.env //= {}
+     | .env.ECC_DISABLED_HOOKS = (.env.ECC_DISABLED_HOOKS // $disabled)
+     | .env.GATEGUARD_BASH_ROUTINE_DISABLED = (.env.GATEGUARD_BASH_ROUTINE_DISABLED // $gateguard)' \
+    "$settings" > "$tmp" \
+    || die "jq failed to patch hook-audit env defaults in $settings"
+  mv "$tmp" "$settings"
+  log "applied hook-audit env defaults (ECC_DISABLED_HOOKS, GATEGUARD_BASH_ROUTINE_DISABLED) where unset"
+}
+
 # Installs ECC's statusline, which shows more than the inline bash bar it
 # replaced: model, the in-progress task, session cost/tool/file counts (once
 # ecc-metrics-bridge runs), the working directory, and the context bar.
@@ -530,70 +603,51 @@ patch_mcp_catalog() {
 
   [[ -f "$mcp_src" ]] || { warn "ECC mcp-servers.json not found at $mcp_src — skipped"; return; }
 
-  # 1. Replace all YOUR_*_HERE placeholders with ${VAR_NAME} syntax.
+  # 1. Replace all YOUR_*_HERE placeholders with ${VAR_NAME} syntax, looked up
+  #    from mcp-placeholder-map.json — adding a new MCP server's placeholder is
+  #    a data edit to that file, not a bash edit here.
   #    Claude Code expands ${VAR} in command/args/env/url/headers fields.
   #    If the env var is unset, parsing fails and the server stays disabled.
   # 2. Replace filesystem path placeholder with a safe default.
   # 3. Strip description fields and _comments (not valid in .claude.json).
+  local placeholder_map="${SCRIPT_DIR}/mcp-placeholder-map.json"
+  [[ -f "$placeholder_map" ]] || die "mcp-placeholder-map.json missing at $placeholder_map"
+
+  # An empty/null value would still match and substitute via gsub below,
+  # producing a literal "${}" that the unmapped-placeholder check further
+  # down cannot catch (it only looks for YOUR_..._HERE text, which would
+  # already be gone) — so guard against it here instead.
+  local empty_placeholder_keys
+  empty_placeholder_keys="$(jq -r '[to_entries[] | select(.value == "" or .value == null) | .key] | join(", ")' "$placeholder_map")"
+  [[ -z "$empty_placeholder_keys" ]] \
+    || die "mcp-placeholder-map.json has empty/null values for: $empty_placeholder_keys — every placeholder must map to a non-empty env-var name"
+
   local mcp_processed
   mcp_processed="$(mktemp)"
   sed \
     -e 's|/path/to/your/projects|${MCP_FILESYSTEM_PATH:-$HOME}|g' \
     "$mcp_src" \
-    | jq '
-      def fix_placeholders:
+    | jq --slurpfile map "$placeholder_map" '
+      def fix_placeholders($m):
         if type == "object" then
           to_entries
           | map(
             if .value == null then .
             elif (.key == "description") then empty
-            else .value = (.value | fix_placeholders) | .
+            else .value = (.value | fix_placeholders($m)) | .
             end
           )
           | from_entries
         elif type == "array" then
-          map(fix_placeholders)
+          map(fix_placeholders($m))
         elif type == "string" then
-          gsub(
-            "YOUR_JIRA_URL_HERE";           "${JIRA_URL}"
-          ) | gsub(
-            "YOUR_JIRA_EMAIL_HERE";         "${JIRA_EMAIL}"
-          ) | gsub(
-            "YOUR_JIRA_API_TOKEN_HERE";     "${JIRA_API_TOKEN}"
-          ) | gsub(
-            "YOUR_GITHUB_PAT_HERE";         "${GITHUB_PERSONAL_ACCESS_TOKEN}"
-          ) | gsub(
-            "YOUR_FIRECRAWL_KEY_HERE";      "${FIRECRAWL_API_KEY}"
-          ) | gsub(
-            "YOUR_PROJECT_REF";             "${SUPABASE_PROJECT_REF}"
-          ) | gsub(
-            "YOUR_EXA_API_KEY_HERE";        "${EXA_API_KEY}"
-          ) | gsub(
-            "YOUR_FAL_KEY_HERE";            "${FAL_KEY}"
-          ) | gsub(
-            "YOUR_BROWSERBASE_KEY_HERE";    "${BROWSERBASE_API_KEY}"
-          ) | gsub(
-            "YOUR_BROWSER_USE_KEY_HERE";    "${BROWSER_USE_API_KEY}"
-          ) | gsub(
-            "YOUR_CONFLUENCE_URL_HERE";     "${CONFLUENCE_BASE_URL}"
-          ) | gsub(
-            "YOUR_EMAIL_HERE";              "${CONFLUENCE_EMAIL}"
-          ) | gsub(
-            "YOUR_CONFLUENCE_TOKEN_HERE";   "${CONFLUENCE_API_TOKEN}"
-          ) | gsub(
-            "YOUR_OPENAI_API_KEY_HERE";     "${OPENAI_API_KEY}"
-          ) | gsub(
-            "YOUR_CS_ACCESS_TOKEN_HERE";    "${CS_ACCESS_TOKEN}"
-          ) | gsub(
-            "YOUR_MEMXUS_API_KEY_HERE";     "${MEMXUS_API_KEY}"
-          ) | gsub(
-            "YOUR_LOWERCASE_HARNESS_SLUG_HERE"; "${ECC_MEMORY_HARNESS}"
-          )
+          reduce ($m | to_entries[]) as $e (.; gsub($e.key; "${" + $e.value + "}"))
         else .
         end;
 
-      del(._comments)
-      | .mcpServers |= map_values(fix_placeholders)
+      ($map[0]) as $m
+      | del(._comments)
+      | .mcpServers |= map_values(fix_placeholders($m))
     ' > "$mcp_processed" \
     || die "jq failed to process MCP catalog from $mcp_src"
 
@@ -618,165 +672,6 @@ patch_mcp_catalog() {
   mv "$tmp" "$config"
   rm -f "$mcp_processed"
   log "patched .claude.json ($count MCP servers cataloged)"
-}
-
-# ── Embedded Telegram hook source ────────────────────────────────────────────
-telegram_js_source() {
-  cat <<'JSEOF'
-#!/usr/bin/env node
-/**
- * Telegram Notification Hook.
- *
- * Credentials: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID via env only.
- * Set them in ~/.claude/settings.json `env` block (Claude Code injects them
- * into hook subprocesses). See: code.claude.com/docs/en/env-vars
- *
- * Summary resolution order:
- *   1. input.last_assistant_message            (Stop event)
- *   2. transcript_path -> last assistant text  (Notification, idle case)
- *   3. input.message                           (Notification, tool-block case)
- *   4. default fallback string
- */
-'use strict';
-
-const https = require('https');
-const fs = require('fs');
-
-const MAX_BODY_LENGTH = 100;
-const MAX_TRANSCRIPT_BYTES = 4 * 1024 * 1024;
-const REQUEST_TIMEOUT_MS = 5000;
-const CONFIG = loadConfig();
-
-function loadConfig() {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (token && chatId) return { token, chatId };
-  return null;
-}
-
-function readTranscriptTail(transcriptPath) {
-  try {
-    const stat = fs.statSync(transcriptPath);
-    if (stat.size <= MAX_TRANSCRIPT_BYTES) {
-      return fs.readFileSync(transcriptPath, 'utf8');
-    }
-    const fd = fs.openSync(transcriptPath, 'r');
-    try {
-      const buf = Buffer.alloc(MAX_TRANSCRIPT_BYTES);
-      fs.readSync(fd, buf, 0, MAX_TRANSCRIPT_BYTES, stat.size - MAX_TRANSCRIPT_BYTES);
-      return buf.toString('utf8');
-    } finally {
-      fs.closeSync(fd);
-    }
-  } catch {
-    return null;
-  }
-}
-
-function readLastAssistantText(transcriptPath) {
-  if (!transcriptPath) return null;
-  const content = readTranscriptTail(transcriptPath);
-  if (!content) return null;
-
-  const lines = content.split('\n');
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    let entry;
-    try { entry = JSON.parse(line); } catch { continue; }
-
-    if (entry.type === 'user' &&
-        entry.message && typeof entry.message.content === 'string') {
-      return null;
-    }
-    if (entry.type !== 'assistant') continue;
-    if (!entry.message || !Array.isArray(entry.message.content)) continue;
-
-    const blocks = entry.message.content;
-    if (blocks.some(c => c && c.type === 'tool_use')) return null;
-
-    const texts = blocks
-      .filter(c => c && c.type === 'text' && typeof c.text === 'string' && c.text.trim())
-      .map(c => c.text.trim());
-    if (texts.length) return texts.join('\n');
-  }
-  return null;
-}
-
-function extractSummary(message) {
-  if (!message || typeof message !== 'string') return 'Done';
-  const firstLine = message.split('\n').map(l => l.trim()).find(l => l.length > 0);
-  if (!firstLine) return 'Done';
-  return firstLine.length > MAX_BODY_LENGTH
-    ? `${firstLine.slice(0, MAX_BODY_LENGTH)}...`
-    : firstLine;
-}
-
-function sendTelegram(text) {
-  if (!CONFIG) return;
-  const payload = JSON.stringify({
-    chat_id: CONFIG.chatId,
-    text,
-    disable_web_page_preview: true,
-  });
-  const req = https.request(
-    {
-      hostname: 'api.telegram.org',
-      port: 443,
-      path: `/bot${CONFIG.token}/sendMessage`,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(payload),
-      },
-      timeout: REQUEST_TIMEOUT_MS,
-    },
-    res => {
-      res.on('data', () => {});
-      res.on('end', () => {});
-    },
-  );
-  req.on('error', () => {});
-  req.on('timeout', () => req.destroy());
-  req.write(payload);
-  req.end();
-  if (typeof req.unref === 'function') req.unref();
-}
-
-function resolveSummary(input) {
-  return (
-    input.last_assistant_message ||
-    readLastAssistantText(input.transcript_path) ||
-    input.message ||
-    'Claude Code needs your attention'
-  );
-}
-
-function run(raw) {
-  try {
-    const input = raw && raw.trim() ? JSON.parse(raw) : {};
-    sendTelegram(extractSummary(resolveSummary(input)));
-  } catch {}
-  return raw;
-}
-
-module.exports = { run };
-
-if (require.main === module) {
-  const MAX_STDIN = 1024 * 1024;
-  let data = '';
-  process.stdin.setEncoding('utf8');
-  process.stdin.on('data', chunk => {
-    if (data.length < MAX_STDIN) {
-      data += chunk.substring(0, MAX_STDIN - data.length);
-    }
-  });
-  process.stdin.on('end', () => {
-    const out = run(data);
-    if (out) process.stdout.write(out);
-  });
-}
-JSEOF
 }
 
 # ── Shell RC patch ───────────────────────────────────────────────────────────
@@ -896,6 +791,7 @@ main() {
   install_hooks_runtime
   # Both need install_hooks_runtime to have copied the scripts they point at.
   install_hook_graph
+  ensure_ecc_hook_config
   patch_settings_statusline
   install_telegram_hook
   patch_shell_rc
