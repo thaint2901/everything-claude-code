@@ -7,6 +7,11 @@
  * "leaves an existing value alone" is the thing worth pinning. The default hook
  * list itself lives in thaint-setup/disabled-hooks.txt, not in the script.
  *
+ * A second suite below (computeDisabledHooksDefault) exercises the actual bash
+ * snippet that turns disabled-hooks.txt into ECC_DISABLED_HOOKS_DEFAULT — the
+ * ensure_ecc_hook_config harness above hardcodes that value instead of
+ * computing it, so it alone can never catch a bug in the computation itself.
+ *
  * Run with: node tests/scripts/ensure-ecc-hook-config.test.js
  */
 
@@ -53,6 +58,8 @@ function runConfig(opts = {}) {
   const body = fs.readFileSync(SCRIPT, 'utf8');
   const fn = body.match(/^ensure_ecc_hook_config\(\) \{[\s\S]*?^\}/m);
   assert.ok(fn, 'could not extract ensure_ecc_hook_config from the script');
+  const normalizeFn = body.match(/^normalize_hook_list\(\) \{[\s\S]*?^\}/m);
+  assert.ok(normalizeFn, 'could not extract normalize_hook_list from the script');
   const listBody = fs.readFileSync(DISABLED_HOOKS_FILE, 'utf8');
   const computedDefault = listBody
     .split('\n')
@@ -72,6 +79,7 @@ readonly GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT="${DEFAULT_GATEGUARD}"
 log()  { printf '[log] %s\\n' "$*"; }
 warn() { printf '[warn] %s\\n' "$*" >&2; }
 die()  { printf '[die] %s\\n' "$*" >&2; exit 1; }
+${normalizeFn[0]}
 ${fn[0]}
 for _ in $(seq 1 ${opts.runs || 1}); do ensure_ecc_hook_config; done
 `
@@ -174,5 +182,83 @@ function runTests() {
   return { passed, failed };
 }
 
-const { failed } = runTests();
+/**
+ * Extract the actual bash snippet that computes ECC_DISABLED_HOOKS_DEFAULT
+ * from disabled-hooks.txt and run it for real against a scratch fixture —
+ * unlike runConfig() above, nothing here is hardcoded/reimplemented in JS.
+ * @param {string|null} fixtureContent - written as disabled-hooks.txt, or
+ *   omitted entirely from the scratch dir when null (simulates a missing file).
+ * @returns {{status: number, stdout: string, stderr: string}}
+ */
+function computeDisabledHooksDefault(fixtureContent) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-disabled-hooks-compute-'));
+  if (fixtureContent !== null) {
+    fs.writeFileSync(path.join(dir, 'disabled-hooks.txt'), fixtureContent);
+  }
+
+  const body = fs.readFileSync(SCRIPT, 'utf8');
+  const computeBlock = body.match(
+    /\[\[ -f "\$\{SCRIPT_DIR\}\/disabled-hooks\.txt" \]\][\s\S]*?readonly ECC_DISABLED_HOOKS_DEFAULT="\$ecc_disabled_hooks_default"\n/
+  );
+  assert.ok(computeBlock, 'could not extract the ECC_DISABLED_HOOKS_DEFAULT computation from the script');
+
+  const harness = path.join(dir, 'run.sh');
+  fs.writeFileSync(
+    harness,
+    `set -euo pipefail
+SCRIPT_DIR="${dir}"
+die()  { printf '[die] %s\n' "$*" >&2; exit 1; }
+${computeBlock[0]}
+printf '%s' "$ECC_DISABLED_HOOKS_DEFAULT"
+`
+  );
+
+  const r = spawnSync('bash', [harness], { encoding: 'utf8', timeout: 10000 });
+  return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
+}
+
+function runComputeTests() {
+  console.log('\n=== Testing the real disabled-hooks.txt -> ECC_DISABLED_HOOKS_DEFAULT computation ===\n');
+  let passed = 0;
+  let failed = 0;
+
+  if (
+    test('computes the real disabled-hooks.txt into the expected comma string', () => {
+      const listBody = fs.readFileSync(DISABLED_HOOKS_FILE, 'utf8');
+      const r = computeDisabledHooksDefault(listBody);
+      assert.strictEqual(r.status, 0, `exit ${r.status}: ${r.stderr}`);
+      assert.strictEqual(r.stdout, DEFAULT_DISABLED);
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('dies loudly when disabled-hooks.txt has no active entries (all comments/blank) — Fix 1 regression', () => {
+      const r = computeDisabledHooksDefault('# nothing but comments\n\n# still nothing\n');
+      assert.notStrictEqual(r.status, 0, 'expected a non-zero exit when every line is filtered out');
+      assert.ok(r.stderr.includes('no active hook entries'), `expected the die message, got: ${r.stderr}`);
+      assert.strictEqual(r.stdout, '', 'must not silently produce an empty default');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('dies with a clear message when disabled-hooks.txt is missing entirely', () => {
+      const r = computeDisabledHooksDefault(null);
+      assert.notStrictEqual(r.status, 0, 'expected a non-zero exit for a missing file');
+      assert.ok(r.stderr.includes('disabled-hooks.txt missing'), `expected the missing-file die message, got: ${r.stderr}`);
+    })
+  )
+    passed++;
+  else failed++;
+
+  console.log(`\nResults: ${passed} passed, ${failed} failed\n`);
+  return { passed, failed };
+}
+
+const configResults = runTests();
+const computeResults = runComputeTests();
+const failed = configResults.failed + computeResults.failed;
 process.exit(failed > 0 ? 1 : 0);

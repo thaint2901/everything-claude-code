@@ -382,12 +382,17 @@ readonly GRAPH_EXEMPT='["insaits-security","telegram-notify"]'
 # ships. The list itself lives in disabled-hooks.txt (one id per line, `#`
 # comments and blank lines ignored) so adding or dropping a hook is a data
 # edit, not a bash edit.
-read_disabled_hooks_default() {
-  local list="${SCRIPT_DIR}/disabled-hooks.txt"
-  [[ -f "$list" ]] || die "disabled-hooks.txt missing at $list"
-  grep -v '^[[:space:]]*#' "$list" | grep -v '^[[:space:]]*$' | paste -sd, -
-}
-readonly ECC_DISABLED_HOOKS_DEFAULT="$(read_disabled_hooks_default)"
+#
+# Captured into a plain variable before `readonly`, not `readonly VAR="$(cmd)"`
+# directly: bash's readonly/declare/local assignment exit status doesn't
+# propagate an inner command substitution's failure to `set -e` (verified:
+# `bash -c 'set -e; readonly X="$(false)"; echo reached'` prints "reached" and
+# exits 0). The explicit `|| die` below is what actually catches a
+# disabled-hooks.txt that filters down to zero active lines.
+[[ -f "${SCRIPT_DIR}/disabled-hooks.txt" ]] || die "disabled-hooks.txt missing at ${SCRIPT_DIR}/disabled-hooks.txt"
+ecc_disabled_hooks_default="$(grep -v '^[[:space:]]*#' "${SCRIPT_DIR}/disabled-hooks.txt" | grep -v '^[[:space:]]*$' | paste -sd, -)" \
+  || die "disabled-hooks.txt at ${SCRIPT_DIR}/disabled-hooks.txt has no active hook entries (all lines are comments/blank) — refusing to silently disable nothing"
+readonly ECC_DISABLED_HOOKS_DEFAULT="$ecc_disabled_hooks_default"
 readonly GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT="1"
 
 # Wires hooks/hooks.json into settings.json, the only place Claude Code reads
