@@ -4,7 +4,8 @@
  * The function is extracted from the script at run time and executed against a
  * scratch settings.json, same technique as install-hook-graph.test.js. It only
  * ever sets ECC_DISABLED_HOOKS / GATEGUARD_BASH_ROUTINE_DISABLED when absent, so
- * "leaves an existing value alone" is the thing worth pinning.
+ * "leaves an existing value alone" is the thing worth pinning. The default hook
+ * list itself lives in thaint-setup/disabled-hooks.txt, not in the script.
  *
  * Run with: node tests/scripts/ensure-ecc-hook-config.test.js
  */
@@ -16,6 +17,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const SCRIPT = path.resolve(__dirname, '..', '..', 'thaint-setup', 'setup_claude.sh');
+const DISABLED_HOOKS_FILE = path.resolve(__dirname, '..', '..', 'thaint-setup', 'disabled-hooks.txt');
 
 function test(name, fn) {
   try {
@@ -51,9 +53,12 @@ function runConfig(opts = {}) {
   const body = fs.readFileSync(SCRIPT, 'utf8');
   const fn = body.match(/^ensure_ecc_hook_config\(\) \{[\s\S]*?^\}/m);
   assert.ok(fn, 'could not extract ensure_ecc_hook_config from the script');
-  const defaultsMatch = body.match(/^readonly ECC_DISABLED_HOOKS_DEFAULT="([^"]*)"$/m);
-  assert.ok(defaultsMatch, 'could not extract ECC_DISABLED_HOOKS_DEFAULT from the script');
-  assert.strictEqual(defaultsMatch[1], DEFAULT_DISABLED, 'test fixture is out of sync with the script default — update DEFAULT_DISABLED above');
+  const listBody = fs.readFileSync(DISABLED_HOOKS_FILE, 'utf8');
+  const computedDefault = listBody
+    .split('\n')
+    .filter(line => line.trim() && !line.trim().startsWith('#'))
+    .join(',');
+  assert.strictEqual(computedDefault, DEFAULT_DISABLED, 'test fixture is out of sync with disabled-hooks.txt — update DEFAULT_DISABLED above');
 
   const harness = path.join(dir, 'run.sh');
   fs.writeFileSync(

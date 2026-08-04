@@ -379,8 +379,15 @@ readonly GRAPH_EXEMPT='["insaits-security","telegram-notify"]'
 # hooks off" — each id there has its own rationale: dead code, duplicate of
 # another hook, or an unfinished stub). Applied so a fresh install starts from
 # the same audited defaults instead of running every hook the upstream graph
-# ships.
-readonly ECC_DISABLED_HOOKS_DEFAULT="stop:desktop-notify,pre:bash:git-push-reminder,pre:observe,post:observe:continuous-learning,pre:governance-capture,post:governance-capture,post:edit:console-warn,post:session-activity-tracker,post:bash:command-log-audit,post:bash:command-log-cost,post:bash:build-complete,stop:evaluate-session"
+# ships. The list itself lives in disabled-hooks.txt (one id per line, `#`
+# comments and blank lines ignored) so adding or dropping a hook is a data
+# edit, not a bash edit.
+read_disabled_hooks_default() {
+  local list="${SCRIPT_DIR}/disabled-hooks.txt"
+  [[ -f "$list" ]] || die "disabled-hooks.txt missing at $list"
+  grep -v '^[[:space:]]*#' "$list" | grep -v '^[[:space:]]*$' | paste -sd, -
+}
+readonly ECC_DISABLED_HOOKS_DEFAULT="$(read_disabled_hooks_default)"
 readonly GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT="1"
 
 # Wires hooks/hooks.json into settings.json, the only place Claude Code reads
