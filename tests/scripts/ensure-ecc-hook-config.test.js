@@ -3,9 +3,9 @@
  *
  * The function is extracted from the script at run time and executed against a
  * scratch settings.json, same technique as install-hook-graph.test.js. It only
- * ever sets ECC_DISABLED_HOOKS / GATEGUARD_BASH_ROUTINE_DISABLED when absent, so
- * "leaves an existing value alone" is the thing worth pinning. The default hook
- * list itself lives in thaint-setup/disabled-hooks.txt, not in the script.
+ * ever sets ECC_DISABLED_HOOKS / ECC_GATEGUARD when absent, so "leaves an
+ * existing value alone" is the thing worth pinning. The default hook list
+ * itself lives in thaint-setup/disabled-hooks.txt, not in the script.
  *
  * A second suite below (computeDisabledHooksDefault) exercises the actual bash
  * snippet that turns disabled-hooks.txt into ECC_DISABLED_HOOKS_DEFAULT — the
@@ -38,7 +38,7 @@ function test(name, fn) {
 
 const DEFAULT_DISABLED =
   'stop:desktop-notify,pre:bash:git-push-reminder,pre:observe,post:observe:continuous-learning,pre:governance-capture,post:governance-capture,post:edit:console-warn,post:session-activity-tracker,post:bash:command-log-audit,post:bash:command-log-cost,post:bash:build-complete,stop:evaluate-session,stop:cost-tracker';
-const DEFAULT_GATEGUARD = '1';
+const DEFAULT_GATEGUARD = 'off';
 
 /**
  * Build a scratch CLAUDE_HOME and run ensure_ecc_hook_config in it.
@@ -66,6 +66,11 @@ function runConfig(opts = {}) {
     .filter(line => line.trim() && !line.trim().startsWith('#'))
     .join(',');
   assert.strictEqual(computedDefault, DEFAULT_DISABLED, 'test fixture is out of sync with disabled-hooks.txt — update DEFAULT_DISABLED above');
+  // The harness below injects DEFAULT_GATEGUARD rather than sourcing the
+  // script, so without this the script's own constant would never be pinned.
+  const gateguardDefault = body.match(/^readonly ECC_GATEGUARD_DEFAULT="([^"]*)"/m);
+  assert.ok(gateguardDefault, 'could not extract ECC_GATEGUARD_DEFAULT from the script');
+  assert.strictEqual(gateguardDefault[1], DEFAULT_GATEGUARD, 'test fixture is out of sync with ECC_GATEGUARD_DEFAULT in setup_claude.sh — update DEFAULT_GATEGUARD above');
 
   const harness = path.join(dir, 'run.sh');
   fs.writeFileSync(
@@ -75,7 +80,7 @@ TAG=test
 DRY_RUN=${opts.dryRun ? 1 : 0}
 CLAUDE_HOME="${home}"
 readonly ECC_DISABLED_HOOKS_DEFAULT="${DEFAULT_DISABLED}"
-readonly GATEGUARD_BASH_ROUTINE_DISABLED_DEFAULT="${DEFAULT_GATEGUARD}"
+readonly ECC_GATEGUARD_DEFAULT="${DEFAULT_GATEGUARD}"
 log()  { printf '[log] %s\\n' "$*"; }
 warn() { printf '[warn] %s\\n' "$*" >&2; }
 die()  { printf '[die] %s\\n' "$*" >&2; exit 1; }
@@ -105,7 +110,7 @@ function runTests() {
       const r = runConfig({ existingSettings: {} });
       assert.strictEqual(r.status, 0, `exit ${r.status}: ${r.stderr}`);
       assert.strictEqual(r.settings.env.ECC_DISABLED_HOOKS, DEFAULT_DISABLED);
-      assert.strictEqual(r.settings.env.GATEGUARD_BASH_ROUTINE_DISABLED, DEFAULT_GATEGUARD);
+      assert.strictEqual(r.settings.env.ECC_GATEGUARD, DEFAULT_GATEGUARD);
     })
   )
     passed++;
@@ -127,19 +132,32 @@ function runTests() {
       assert.strictEqual(r.status, 0, `exit ${r.status}: ${r.stderr}`);
       assert.strictEqual(r.settings.env.ECC_DISABLED_HOOKS, 'my-own-custom-list', 'custom value must survive');
       assert.ok(r.stderr.includes('ECC_DISABLED_HOOKS already set to a different value'), `expected a warning, got: ${r.stderr}`);
-      // GATEGUARD_BASH_ROUTINE_DISABLED was absent, so it still gets the default.
-      assert.strictEqual(r.settings.env.GATEGUARD_BASH_ROUTINE_DISABLED, DEFAULT_GATEGUARD);
+      // ECC_GATEGUARD was absent, so it still gets the default.
+      assert.strictEqual(r.settings.env.ECC_GATEGUARD, DEFAULT_GATEGUARD);
     })
   )
     passed++;
   else failed++;
 
   if (
-    test('leaves a pre-existing custom GATEGUARD_BASH_ROUTINE_DISABLED untouched and warns', () => {
-      const r = runConfig({ existingSettings: { env: { GATEGUARD_BASH_ROUTINE_DISABLED: '0' } } });
+    test('leaves a pre-existing custom ECC_GATEGUARD untouched and warns', () => {
+      const r = runConfig({ existingSettings: { env: { ECC_GATEGUARD: 'on' } } });
       assert.strictEqual(r.status, 0, `exit ${r.status}: ${r.stderr}`);
-      assert.strictEqual(r.settings.env.GATEGUARD_BASH_ROUTINE_DISABLED, '0', 'custom value must survive');
-      assert.ok(r.stderr.includes('GATEGUARD_BASH_ROUTINE_DISABLED already set to a different value'), `expected a warning, got: ${r.stderr}`);
+      assert.strictEqual(r.settings.env.ECC_GATEGUARD, 'on', 'custom value must survive');
+      assert.ok(r.stderr.includes('ECC_GATEGUARD already set to a different value'), `expected a warning, got: ${r.stderr}`);
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    // gateguard-fact-force.js lowercases the value before matching it, so the
+    // script compares case-insensitively: `OFF` already is the default.
+    test('treats an existing ECC_GATEGUARD that differs only in case as the default — no warning', () => {
+      const r = runConfig({ existingSettings: { env: { ECC_GATEGUARD: 'OFF' } } });
+      assert.strictEqual(r.status, 0, `exit ${r.status}: ${r.stderr}`);
+      assert.strictEqual(r.settings.env.ECC_GATEGUARD, 'OFF', 'existing casing must survive unchanged');
+      assert.ok(!r.stderr.includes('ECC_GATEGUARD already set to a different value'), `unexpected warning: ${r.stderr}`);
     })
   )
     passed++;
