@@ -241,9 +241,7 @@ function computeDisabledHooksDefault(fixtureContent) {
   }
 
   const body = fs.readFileSync(SCRIPT, 'utf8');
-  const computeBlock = body.match(
-    /\[\[ -f "\$\{SCRIPT_DIR\}\/disabled-hooks\.txt" \]\][\s\S]*?readonly ECC_DISABLED_HOOKS_DEFAULT="\$ecc_disabled_hooks_default"\n/
-  );
+  const computeBlock = body.match(/\[\[ -f "\$\{SCRIPT_DIR\}\/disabled-hooks\.txt" \]\][\s\S]*?readonly ECC_DISABLED_HOOKS_DEFAULT="\$ecc_disabled_hooks_default"\n/);
   assert.ok(computeBlock, 'could not extract the ECC_DISABLED_HOOKS_DEFAULT computation from the script');
 
   const harness = path.join(dir, 'run.sh');
