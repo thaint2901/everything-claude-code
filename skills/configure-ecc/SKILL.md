@@ -87,7 +87,22 @@ rev-parse` succeeds in *any* git repository, so it happily returns the user's ow
 project. Each candidate is a guess; `is_ecc` is what turns it into an answer, which is
 why it runs on all of them and not once at the end.
 
-If every option fails, say so and ask the user for a path. Clone
+If every option fails, search before asking. All three candidates missing is the
+ordinary case, not an unusual one — ECC is often just a clone somewhere in the home
+directory, neither installed as a plugin nor the repo being configured:
+
+```bash
+find ~ -maxdepth 4 -name install-modules.json -path '*/manifests/*' \
+  -not -path '*/node_modules/*' 2>/dev/null
+```
+
+Several hits is normal, and they are not interchangeable: a fork the user actually runs
+sits beside upstream clones they do not. Choose on last commit date and on which remote
+matches their own account, and say which one was chosen and why. Installing from a stale
+upstream clone ships code the user is not running, which is the same failure this step
+avoids by preferring a local checkout over a fresh clone.
+
+Ask for a path only once the search comes back empty. Clone
 `https://github.com/affaan-m/everything-claude-code.git` only with explicit
 consent, and `rm -rf` that clone once the install is done.
 
@@ -107,6 +122,14 @@ which one happened.
 Never hardcode a skill list in this file. Any list written here is stale the moment a
 skill is added, and a hardcoded list silently shrinks the candidate set — an assessment
 that can only see a fraction of the candidates is not an assessment.
+
+Every record in that JSON carries a `description`. Use it. It is the second tier of this
+assessment and it costs nothing extra, because the one command above already fetched it.
+Judging a candidate from its `id` alone when the description was sitting in the same
+response is the cheapest avoidable error in this skill: identifiers compress badly, and
+several hundred name-only verdicts is a guess wearing an assessment's clothes. Reading a
+skill's actual `SKILL.md` is the third tier and the expensive one — spend it on the
+candidates the description could not settle.
 
 ---
 
@@ -132,12 +155,24 @@ Eliminate aggressively, because the costs are asymmetric: a wrongly excluded bun
 costs one follow-up sentence from the user, while a wrongly included one costs context
 on every session, indefinitely.
 
-Two reconciliation rules:
+Then reconcile, before going any further. Not every skill belongs to a thematic bundle,
+and one that belongs to none is invisible to everything above — it is neither eliminated
+nor surviving, it simply never came up. Subtract the union of all bundle members from
+the Step 1 list and assess whatever is left over on its own:
 
-- A handful of skills belong to no thematic bundle. Reconcile the surviving set against
-  the full list from Step 1 so bundle sweeping never becomes the only path in.
-- Record which bundles were eliminated and on what evidence. That list goes in the
-  report — it is most of the "deliberately excluded" section.
+```bash
+# $ALL_CANDIDATES from Step 1; $BUNDLE_MEMBERS is every id the bundles' globs claim
+comm -13 <(printf '%s\n' $BUNDLE_MEMBERS | sort -u) \
+         <(printf '%s\n' $ALL_CANDIDATES  | sort -u)
+```
+
+Run this as a step, not as a final tidy-up. It is easy to skip because the assessment
+already feels complete by the time it comes up, and skipping it is undetectable from the
+output — the missing skills leave no trace in either the recommended or the excluded
+table.
+
+Record which bundles were eliminated and on what evidence. That list goes in the
+report — it is most of the "deliberately excluded" section.
 
 Bundles that survive but that the repository cannot speak to at all — business,
 content, industry domains — are neither eliminated nor assessed. They go to Step 6 as a
@@ -147,7 +182,17 @@ single question each.
 
 ## Step 3: Select by Evidence
 
-Only for skills inside surviving bundles.
+Only for skills inside surviving bundles — but for **every** one of them. A surviving
+bundle can hold forty or seventy skills, and at that size the pull is to sweep by name:
+no React files anywhere, so every id containing `react` goes without being looked at.
+That sweep is not an assessment. It is the hardcoded list this skill exists to remove,
+rebuilt at runtime out of identifiers. Every member gets a verdict against the
+`description` Step 1 already fetched — that tier is why Step 2 could afford to be coarse
+in the first place.
+
+If a coarser method gets used anyway, name the skills it covered in the report's "Not
+assessed" section. An undisclosed sweep is what turns "reviewed all 281 candidates" into
+a claim that collapses the moment someone asks how.
 
 Run `/project-init --dry-run` and keep its detected-stack evidence and resolved plan. If
 it fails or returns nothing, say so and continue on the repository evidence alone — do
@@ -164,6 +209,19 @@ Then go past what the mapping can express, by reading the repo:
 - Does an existing `CLAUDE.md`, `.claude/rules/`, or house style already cover what a skill would add?
 - What do the test and build scripts say about how this team actually works?
 
+"Actually used" has a cheap measurement, and presence alone is a weak one. Count commits
+per top-level directory over the last ninety days:
+
+```bash
+git log --since='90 days ago' --name-only --pretty=format: \
+  | awk -F/ 'NF>1 && $1!=""{print $1}' | sort | uniq -c | sort -rn
+```
+
+A subsystem with a full dependency set and two commits in three months is declared, not
+alive, and skills selected for it will be loaded on every session to serve code nobody
+touches. Cite the count the same way as a file — it is evidence, and it refutes exactly
+the plausible-looking recommendations that reading `package.json` alone produces.
+
 Every recommendation must carry a falsifiable claim — a file and line someone can
 re-check, not an impression. "Looks like a React project" is not evidence;
 "`package.json:14` depends on `react@19`" is. The point is not formality: a claim
@@ -171,8 +229,29 @@ nobody can check is a claim nobody can correct, and this report is meant to be a
 with. A recommendation with no such claim is not a weak recommendation, it is an
 exclusion.
 
-Do not ask the user what their stack is. The repository answers that, and asking
-signals the assessment was skipped.
+Two kinds of evidence are admissible, in this order of preference:
+
+1. **The repository** — cited as `file:line`.
+2. **The user** — a direct answer, cited as `user:<what they said>`.
+
+Do not ask what the repository already answers; asking there signals the assessment was
+skipped. But a repository that *cannot* answer is an ordinary situation, not a failure.
+A newly initialised project has no dependency graph, no test scripts and no history to
+read, and no amount of careful reading will produce a `file:line` for it.
+
+Measure that before spending effort on Step 3's reading: count tracked files, distinct
+languages, and commits. When the repository is thin, asking **is** the assessment.
+
+This matters because the failure is silent. Every candidate lacks a claim, the exclusion
+rule above fires on all of them, and the report renders `Recommended (0)` — identical to
+the output for a mature repository that genuinely needs nothing, and for the tooling
+failures Steps 1 and 2 guard against. The project most in need of a starting set is the
+one this skill is most likely to hand nothing to.
+
+So switch sources rather than concluding. Ask about stack, layers, and intended workflow
+in bundle-sized questions, and carry the answers as `user:` citations through Steps 5 and
+6 exactly as if they had come from a file — including into the refutation pass, where an
+answer about intent is checked against what the scaffold actually contains.
 
 Enrich each surviving candidate with two signals the manifest carries but the component
 record does not:
@@ -241,6 +320,14 @@ Compose with the skills that already measure this rather than reinventing them:
 If the repo already has an ECC install, diff against it: recommend removals for skills
 whose supporting evidence has disappeared, not just additions.
 
+On that path, read "recommendation" as every line of the diff — what to add, what to
+remove, **and what to keep**. The pull is to refute only the removals, because those are
+the visible changes and a keep feels like settled work re-opened. It is not settled: the
+evidence behind a keep is the oldest evidence in the assessment and therefore the most
+likely to have gone stale, and a keep carried on inertia is indistinguishable in the
+report from one that was checked this run. Refute in all three directions, or state
+plainly which of them you did not.
+
 ---
 
 ## Step 6: Report the Assessment
@@ -273,6 +360,16 @@ Ask the user only about the bundles in the third section — one question each, 
 per skill. Then use `AskUserQuestion` to confirm the shortlist. Never enumerate the full
 candidate set: it will not fit, and presenting it defeats the point of assessing.
 
+`AskUserQuestion` carries at most four questions per call, so a repository that answers
+little needs the bundles grouped into themes rather than asked one by one. Give each
+option a description in the user's terms — "a web API", "a data pipeline" — not skill
+ids, which mean nothing to someone who has not read the catalogue.
+
+On a new or nearly empty project this third section is most of the report and the
+recommended table is short. That is the correct shape, not a failed assessment: there is
+nothing to read yet, so the questions *are* the evidence-gathering. Say that plainly
+instead of presenting a thin table as though the repository had been interrogated.
+
 ---
 
 ## Step 7: Choose Installation Level
@@ -302,6 +399,15 @@ root, and every later `cp` follows it there.
 ```bash
 mkdir -p "$TARGET/skills" "$TARGET/rules"
 ```
+
+A re-assessment does not skip this step. Where things live is already answered — read it
+off disk instead of asking again — but `TARGET` still has to be set from what was found,
+because Steps 8 and 9 both dereference it and neither complains when it is empty.
+
+This step and Step 10 are the two that quietly disappear on the re-assessment path: the
+level reads as already decided, and tailoring reads as something that belongs to a fresh
+install. Neither is true. Skipping Step 10 and then filing a Step 9 repair under
+"tailoring applied" reports work that was never offered, let alone done.
 
 ---
 
@@ -340,6 +446,28 @@ Install the rule directories the assessment selected, preserving per-language la
 cp -r "$ECC_ROOT/rules/common" "$TARGET/rules/common"
 cp -r "$ECC_ROOT/rules/<language>" "$TARGET/rules/<language>"
 ```
+
+### Removals
+
+A re-assessment (Step 5) can drop skills whose evidence has disappeared. Deleting them
+is the only action in this skill that destroys work. Back up first, check the backup
+took, and let a short count stop the deletion:
+
+```bash
+mkdir -p "$TARGET/skills-backup"
+n=0
+for s in $REMOVE; do
+  [ -d "$TARGET/skills/$s" ] || { echo "WARN missing: $s"; continue; }
+  cp -R "$TARGET/skills/$s" "$TARGET/skills-backup/" && n=$((n + 1))
+done
+[ "$n" -eq "$(echo $REMOVE | wc -w)" ] || { echo "backed up $n — not deleting"; exit 1; }
+```
+
+Run this and every other loop in this skill under `bash -euc`, not the user's login
+shell. `zsh` does not word-split an unquoted `$REMOVE`: the loop runs once with the whole
+list as a single directory name, every path misses, and `n` stays at `0`. Without the
+count check, the next command would `rm -rf` every one of those directories against an
+empty backup — a silent total loss, from a shell difference and nothing else.
 
 ---
 
