@@ -26,7 +26,9 @@ as much of a deliverable as a selection.
 
 `/project-init` already detects the project stack, resolves an install plan from the
 manifests, runs a dry-run, and gates on approval. **Do not reimplement any of that.**
-Call it and use its output as evidence.
+When mechanical stack detection is worth having, call it rather than rebuilding it —
+Step 3 treats it as an optional shortcut, since reading the repository directly usually
+answers faster.
 
 This skill owns the two things `/project-init` does not do:
 
@@ -123,13 +125,29 @@ Never hardcode a skill list in this file. Any list written here is stale the mom
 skill is added, and a hardcoded list silently shrinks the candidate set — an assessment
 that can only see a fraction of the candidates is not an assessment.
 
-Every record in that JSON carries a `description`. Use it. It is the second tier of this
-assessment and it costs nothing extra, because the one command above already fetched it.
-Judging a candidate from its `id` alone when the description was sitting in the same
-response is the cheapest avoidable error in this skill: identifiers compress badly, and
-several hundred name-only verdicts is a guess wearing an assessment's clothes. Reading a
-skill's actual `SKILL.md` is the third tier and the expensive one — spend it on the
-candidates the description could not settle.
+The `description` field in that JSON is **not** the assessment tier it appears to be.
+In the current manifests nearly every record carries the boilerplate string "Install
+only the `<id>` skill directory." — data that exists but judges nothing. Sample it
+before trusting it, and treat a boilerplate result like the failures above: name it in
+the report rather than quietly pressing on, because a tier that looks consulted but
+said nothing is how name-only verdicts pass as an assessment.
+
+The real one-line descriptions live in each skill's `SKILL.md` frontmatter, and they
+are cheap to batch-read:
+
+```bash
+for s in <ids>; do
+  awk '/^description:/{sub(/^description: */,""); print FILENAME": "$0; exit}' \
+    "$ECC_ROOT/skills/$s/SKILL.md"
+done
+```
+
+That frontmatter line is the second tier of this assessment. Judging a candidate from
+its `id` alone when a one-line description is this cheap is the most avoidable error in
+this skill: identifiers compress badly, and several hundred name-only verdicts is a
+guess wearing an assessment's clothes. Reading a skill's full `SKILL.md` body is the
+third tier and the expensive one — spend it on the candidates the description could not
+settle.
 
 ---
 
@@ -157,14 +175,12 @@ on every session, indefinitely.
 
 Then reconcile, before going any further. Not every skill belongs to a thematic bundle,
 and one that belongs to none is invisible to everything above — it is neither eliminated
-nor surviving, it simply never came up. Subtract the union of all bundle members from
-the Step 1 list and assess whatever is left over on its own:
-
-```bash
-# $ALL_CANDIDATES from Step 1; $BUNDLE_MEMBERS is every id the bundles' globs claim
-comm -13 <(printf '%s\n' $BUNDLE_MEMBERS | sort -u) \
-         <(printf '%s\n' $ALL_CANDIDATES  | sort -u)
-```
+nor surviving, it simply never came up. Expand every bundle's `paths` globs into one
+membership list, subtract it from the Step 1 list, and assess whatever is left over on
+its own. The globs are the authoritative source of membership: the `moduleIds` on Step
+1's component records do not carry thematic-bundle membership, and counting them reports
+nearly the whole catalogue as orphaned — a result that wrong should stop the step, not
+flow into it.
 
 Run this as a step, not as a final tidy-up. It is easy to skip because the assessment
 already feels complete by the time it comes up, and skipping it is undetectable from the
@@ -186,23 +202,30 @@ Only for skills inside surviving bundles — but for **every** one of them. A su
 bundle can hold forty or seventy skills, and at that size the pull is to sweep by name:
 no React files anywhere, so every id containing `react` goes without being looked at.
 That sweep is not an assessment. It is the hardcoded list this skill exists to remove,
-rebuilt at runtime out of identifiers. Every member gets a verdict against the
-`description` Step 1 already fetched — that tier is why Step 2 could afford to be coarse
-in the first place.
+rebuilt at runtime out of identifiers. Every member gets a verdict against its one-line
+description — Step 1's second tier — which is why Step 2 could afford to be coarse in
+the first place.
+
+The unit of work here is the **recorded verdict**, not the lookup. A description that
+was fetched, printed, and never concluded on is the worst spend available — full cost,
+no artifact — and it is invisible afterwards, because a batch of fetched descriptions
+looks exactly like a batch of assessed skills. If a description was read, the report or
+the record shows the one-line conclusion it led to; grouping is fine ("these nine are
+redundant with repo assets: …"), silence is not.
 
 If a coarser method gets used anyway, name the skills it covered in the report's "Not
 assessed" section. An undisclosed sweep is what turns "reviewed all 281 candidates" into
 a claim that collapses the moment someone asks how.
 
-Run `/project-init --dry-run` and keep its detected-stack evidence and resolved plan. If
-it fails or returns nothing, say so and continue on the repository evidence alone — do
-not let a tooling failure pass as "this repo has no stack signal", which is what an
-empty result looks like from here.
-Cross-reference `$ECC_ROOT/config/project-stack-mappings.json`, which maps project
-indicator files to ECC skills, rules, hooks, and commands. It covers a minority of the
-catalogue, so treat a hit as a shortcut and its absence as no signal either way.
+Two optional shortcuts, not requirements: `/project-init --dry-run` yields detected-stack
+evidence and a resolved plan, and `$ECC_ROOT/config/project-stack-mappings.json` maps
+project indicator files to ECC skills, rules, hooks, and commands. Each covers a minority
+of the catalogue, so a hit saves some reading and an absence is no signal either way. If
+one is used and fails, say so and continue on the repository evidence — do not let a
+tooling failure pass as "this repo has no stack signal", which is what an empty result
+looks like from here.
 
-Then go past what the mapping can express, by reading the repo:
+The required part is reading the repo itself:
 
 - Which of the mapped frameworks are actually used, versus merely present as a transitive dependency?
 - Does the repo have the layer a skill assumes — a web layer, a DB layer, a CI pipeline, a UI?
@@ -291,6 +314,14 @@ Apply the same standard as Step 3 — name the indicator file — and the rest f
 
 Language rules extend the common set. If the assessment selects a language without
 `common`, say so and recommend adding it.
+
+Two qualifications on the indicator file. It must belong to code the team writes: a
+vendored or third-party tree satisfies any glob, and a thousand generated files justify
+nothing about how this team works — name the indicator *and* whose code it sits in. And
+it must be re-named on every re-assessment: an installed rule directory is a keep, and
+Step 5's rule applies to it unchanged — a keep with no indicator behind it this run is a
+removal candidate, not settled furniture. Rules are where inertia hides best, because
+"unchanged" feels like a conclusion there rather than the absence of one.
 
 ---
 
@@ -528,6 +559,14 @@ Options:
 Base every edit on the evidence gathered in Step 3 — the project's real test runner,
 formatter, and coverage target — not on asking the user to restate their stack.
 
+The question above **is** the consent gate, and it disappears exactly when it feels most
+skippable: mid-flow on a re-assessment, when Step 9 has just surfaced dangling references
+and editing the files feels like finishing the job rather than starting new work. Ask
+anyway, before the first edit. Fixing a reference Step 9 reported is a repair; adding or
+removing sections is tailoring; neither was consented to by the install approval, and
+filing either under "tailoring applied" in the record claims a consent that was never
+asked for.
+
 **Critical**: only modify files under `$TARGET/`. Never modify the source repository
 at `$ECC_ROOT/`.
 
@@ -540,6 +579,13 @@ in the project, so the next run diffs against it instead of starting over. Recor
 **checks that were run**, not only the conclusions: which files were opened and what was
 searched for. That is what turns the next run into a diff ("no React last time, React
 now") rather than a fresh guess.
+
+The record covers the whole session, not just the state at the moment the report was
+presented. Anything the user challenged, any step run late because the challenge exposed
+it, any verdict corrected after approval — all of it goes in. A record frozen at
+report-time silently sheds exactly the findings that were hardest won, and the next run
+then re-derives them from scratch and presents them to the user as new gaps in the
+previous assessment — a false claim, made confidently, about this skill's own history.
 
 If the project keeps an `ecc-install.json`, keep it consistent with what was installed;
 `/project-init --config ecc-install.json` can then reproduce the install. That format
