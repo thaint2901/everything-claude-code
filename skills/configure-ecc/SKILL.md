@@ -127,10 +127,13 @@ that can only see a fraction of the candidates is not an assessment.
 
 The `description` field in that JSON is **not** the assessment tier it appears to be.
 In the current manifests nearly every record carries the boilerplate string "Install
-only the `<id>` skill directory." — data that exists but judges nothing. Sample it
-before trusting it, and treat a boilerplate result like the failures above: name it in
-the report rather than quietly pressing on, because a tier that looks consulted but
-said nothing is how name-only verdicts pass as an assessment.
+only the `<id>` skill directory." — data that exists but judges nothing. Count it
+rather than sampling it — grep the output for that string. A head-of-list sample is
+order-biased: in the current output the handful of real descriptions sort first, so the
+first few records support exactly the wrong conclusion. Treat a boilerplate-dominated
+result like the failures above: name it in the report rather than quietly pressing on,
+because a tier that looks consulted but said nothing is how name-only verdicts pass as
+an assessment.
 
 The real one-line descriptions live in each skill's `SKILL.md` frontmatter, and they
 are cheap to batch-read:
@@ -141,6 +144,11 @@ for s in <ids>; do
     "$ECC_ROOT/skills/$s/SKILL.md"
 done
 ```
+
+A few skills declare `description: >` — a YAML block scalar whose text starts on the
+next line — and for those the one-liner prints only the character `>`. A `>` is not a
+description: read that file's frontmatter directly rather than judging the skill from
+a punctuation mark.
 
 That frontmatter line is the second tier of this assessment. Judging a candidate from
 its `id` alone when a one-line description is this cheap is the most avoidable error in
@@ -157,8 +165,9 @@ Judging every candidate individually is unaffordable and unnecessary. Most of th
 catalogue can be ruled out in one pass.
 
 Read `$ECC_ROOT/manifests/install-modules.json`. Modules whose `id` does **not** start
-with `skill-` are the thematic bundles; each one's `paths` globs name the skills it
-owns. Ask one cheap question per bundle — "does this repository touch this area at
+with `skill-` are the thematic bundles; each one's `paths` entries name the skills it
+owns as literal `skills/<name>` prefixes — **not globs**. There is not a wildcard among
+them, and feeding them to a glob matcher returns zero members for every bundle. Ask one cheap question per bundle — "does this repository touch this area at
 all?" — answered from a file listing, package manifests, and CI config.
 
 If that file cannot be read or parsed, stop and report it, exactly as in Step 1. An
@@ -175,12 +184,12 @@ on every session, indefinitely.
 
 Then reconcile, before going any further. Not every skill belongs to a thematic bundle,
 and one that belongs to none is invisible to everything above — it is neither eliminated
-nor surviving, it simply never came up. Expand every bundle's `paths` globs into one
+nor surviving, it simply never came up. Expand every bundle's `paths` prefixes into one
 membership list, subtract it from the Step 1 list, and assess whatever is left over on
-its own. The globs are the authoritative source of membership: the `moduleIds` on Step
-1's component records do not carry thematic-bundle membership, and counting them reports
-nearly the whole catalogue as orphaned — a result that wrong should stop the step, not
-flow into it.
+its own. Those prefixes are the authoritative source of membership: the `moduleIds` on
+Step 1's component records do not carry thematic-bundle membership, and counting them
+reports nearly the whole catalogue as orphaned — a result that wrong should stop the
+step, not flow into it.
 
 Run this as a step, not as a final tidy-up. It is easy to skip because the assessment
 already feels complete by the time it comes up, and skipping it is undetectable from the
@@ -400,6 +409,12 @@ On a new or nearly empty project this third section is most of the report and th
 recommended table is short. That is the correct shape, not a failed assessment: there is
 nothing to read yet, so the questions *are* the evidence-gathering. Say that plainly
 instead of presenting a thin table as though the repository had been interrogated.
+
+If the user is not present to answer — an unattended or backgrounded session — do not
+guess on their behalf. Deliver the report, record every action that needed an answer as
+pending, change nothing that this gate or the ones in Steps 7 and 10 would have gated,
+and stop there. An assessment with pending questions is a finished deliverable; an
+install nobody approved is not.
 
 ---
 
