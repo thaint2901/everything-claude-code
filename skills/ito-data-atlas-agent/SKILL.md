@@ -46,7 +46,7 @@ Use four lanes:
 
 ## Useful Skill Chains
 
-- `deep-research` for source collection.
+- `ecc-deep-research` for source collection.
 - `x-api` for current social/event signal.
 - `ito-market-intelligence` for venue and underlier context.
 - `ito-basket-compare` for user knowledge-base matching.

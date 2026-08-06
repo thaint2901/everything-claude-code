@@ -567,7 +567,7 @@
       ]
     },
     {
-      "id": "skill:deep-research",
+      "id": "skill:ecc-deep-research",
       "family": "skill",
       "description": "Deep research and investigation workflows.",
       "modules": [

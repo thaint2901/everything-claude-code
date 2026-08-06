@@ -457,7 +457,7 @@
       "kind": "skills",
       "description": "Research and API integration skills for deep investigations and model integrations.",
       "paths": [
-        "skills/deep-research",
+        "skills/ecc-deep-research",
         "skills/exa-search",
         "skills/research-ops",
         "skills/scientific-db-pubmed-database",

@@ -1,11 +1,11 @@
 ---
-name: deep-research
+name: ecc-deep-research
 description: Multi-source deep research using firecrawl and exa MCPs. Searches the web, synthesizes findings, and delivers cited reports with source attribution. Use when the user wants thorough research on any topic with evidence and citations.
 metadata:
   origin: ECC
 ---
 
-# Deep Research
+# ECC Deep Research
 
 > **Drift-prone skill.** Firecrawl/Exa MCP tool names, quotas, and result
 > shapes change. Verify the configured MCP tools and current API docs before
@@ -25,7 +25,9 @@ Produce thorough, cited research reports from multiple web sources using firecra
 
 At least one of:
 - **firecrawl** — `firecrawl_search`, `firecrawl_scrape`, `firecrawl_crawl`
-- **exa** — `web_search_exa`, `web_search_advanced_exa`, `crawling_exa`
+- **exa** — `web_search_exa`, `web_fetch_exa`
+
+Some firecrawl deployments expose more than this baseline (category-filtered search, async multi-source research jobs, paper/code-specific search) — check your configured server's tool list before assuming which apply.
 
 Both together give the best coverage. Configure in `~/.claude.json` or `~/.codex/config.toml`.
 
@@ -61,7 +63,6 @@ firecrawl_search(query: "<sub-question keywords>", limit: 8)
 **With exa:**
 ```
 web_search_exa(query: "<sub-question keywords>", numResults: 8)
-web_search_advanced_exa(query: "<keywords>", numResults: 5, startPublishedDate: "2025-01-01")
 ```
 
 **Search strategy:**
@@ -81,7 +82,7 @@ firecrawl_scrape(url: "<url>")
 
 **With exa:**
 ```
-crawling_exa(url: "<url>", tokensNum: 5000)
+web_fetch_exa(urls: ["<url>"], maxCharacters: 5000)
 ```
 
 Read 3-5 key sources in full for depth. Do not rely only on search snippets.

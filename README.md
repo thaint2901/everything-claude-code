@@ -1582,7 +1582,7 @@ Canonical Anthropic skills such as `claude-api`, `frontend-design`, and `skill-c
 | codehealth-mcp | Optional — Code Health MCP (opt-in server + token); structural review and commit/PR gates |
 | content-engine | Platform-native social content and repurposing |
 | crosspost | Multi-platform content distribution across X, LinkedIn, Threads |
-| deep-research | Multi-source research with synthesis and source attribution |
+| ecc-deep-research | Multi-source research with synthesis and source attribution |
 | dmux-workflows | Multi-agent orchestration using tmux pane manager |
 | documentation-lookup | Up-to-date library and framework docs via Context7 MCP |
 | e2e-testing | Playwright E2E tests |
