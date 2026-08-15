@@ -12,6 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawnSync } = require('child_process');
+const { writeBridgeAtomic, getBridgePath } = require('../../scripts/lib/session-bridge');
 
 const compactScript = path.join(__dirname, '..', '..', 'scripts', 'hooks', 'suggest-compact.js');
 
@@ -793,6 +794,26 @@ function runTests() {
       assert.ok(fired.stdout.includes('26% of 1M window'), `260k on a 1M window should fire. Got: "${fired.stdout}"`);
     } finally {
       try { fs.unlinkSync(transcript); } catch (_err) { /* ignore */ }
+      ctx.cleanup();
+    }
+  })) passed++;
+  else failed++;
+
+  if (test('prefers the bridge-derived window over the static model table', () => {
+    const ctx = createContextContext();
+    // Same 170k/claude-sonnet-4-6 fixture as "suggests compact when context
+    // exceeds the 200k-window threshold" above, which fires without a bridge.
+    // A bridge saying 83% used (170000 / 0.17 = 1,000,000) must make this run
+    // silent instead — proof the window came from the bridge, not the static
+    // table (which would give the 200k default for this model/token count).
+    const transcript = writeTranscriptFixture(170000);
+    writeBridgeAtomic(ctx.sessionId, { context_remaining_pct: 83, last_timestamp: new Date().toISOString() });
+    try {
+      const result = runCompactWithInput({ session_id: ctx.sessionId, transcript_path: transcript });
+      assert.strictEqual(result.stdout.trim(), '', `Expected bridge-derived 1M window to keep run silent. Got: "${result.stdout}"`);
+    } finally {
+      try { fs.unlinkSync(transcript); } catch (_err) { /* ignore */ }
+      try { fs.unlinkSync(getBridgePath(ctx.sessionId)); } catch (_err) { /* ignore */ }
       ctx.cleanup();
     }
   })) passed++;

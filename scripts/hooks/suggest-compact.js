@@ -27,6 +27,7 @@ const fs = require('fs');
 const path = require('path');
 const { getTempDir, writeFile, readStdinJson, log, output } = require('../lib/utils');
 const { readLatestContextTokens, resolveWindowTokens, resolveContextThreshold, resolveContextInterval, computeContextBucket, formatWindowLabel } = require('../lib/transcript-context');
+const { sanitizeSessionId } = require('../lib/session-bridge');
 
 const COUNTER_FILE_PREFIX = 'claude-tool-count-';
 const CONTEXT_BUCKET_FILE_PREFIX = 'claude-context-bucket-';
@@ -197,7 +198,11 @@ function run(inputOrRaw, _options = {}) {
   // fallbacks) and transcript_path points at the session transcript JSONL
   // used by the context-size signal.
   const rawSessionId = input && typeof input.session_id === 'string' && input.session_id ? input.session_id : process.env.CLAUDE_CODE_SESSION_ID || process.env.CLAUDE_SESSION_ID || 'default';
-  const sessionId = rawSessionId.replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
+  // Shared with session-bridge.js's own sanitizer so a bridge file written by
+  // ecc-statusline.js/ecc-metrics-bridge.js resolves to the same path here —
+  // a local, differently-behaved regex would silently miss every bridge
+  // lookup for a session ID containing a character outside [a-zA-Z0-9_-].
+  const sessionId = sanitizeSessionId(rawSessionId) || 'default';
   const transcriptPath = input && typeof input.transcript_path === 'string' ? input.transcript_path : '';
 
   const tempDir = getTempDir();

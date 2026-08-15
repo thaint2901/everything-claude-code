@@ -33,8 +33,7 @@ function severityColor(used) {
  *
  * `resets_at` is documented in **seconds**, while Date's numeric constructor
  * takes milliseconds — feeding it through unscaled lands in 1970, so the
- * scaling happens here and formatDuration in ecc-statusline.js (which takes an
- * ISO string) is deliberately not reused.
+ * scaling happens here.
  *
  * @param {number} epochSeconds
  * @param {number} [nowMs] - injectable clock, for tests

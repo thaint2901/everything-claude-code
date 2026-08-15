@@ -193,11 +193,7 @@ function runTests() {
 
   if (
     test('renders both 5h and 7d windows when both are present', () => {
-      const out = buildMetricsSegment(
-        { rate_limits: { five_hour: { used_percentage: 6 }, seven_day: { used_percentage: 41 } } },
-        BRIDGE,
-        NOW_MS
-      );
+      const out = buildMetricsSegment({ rate_limits: { five_hour: { used_percentage: 6 }, seven_day: { used_percentage: 41 } } }, BRIDGE, NOW_MS);
       assert.strictEqual(stripAnsi(out), '5h 6%  7d 41%');
     })
   )
