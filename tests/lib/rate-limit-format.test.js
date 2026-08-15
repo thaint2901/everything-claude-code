@@ -180,9 +180,9 @@ function runTests() {
   else failed++;
 
   if (
-    test('countdown is dim, so the reset time does not read as urgent', () => {
+    test('countdown is a fixed grey, so the reset time does not read as urgent', () => {
       const out = buildRateLimitSegment({ five_hour: { used_percentage: 90, resets_at: NOW_SEC + 60 } }, NOW_MS);
-      assert.ok(out.includes('\x1b[2m⏳'), 'countdown should open with the dim code');
+      assert.ok(out.includes('\x1b[90m⏳'), 'countdown should open with the grey code');
     })
   )
     passed++;

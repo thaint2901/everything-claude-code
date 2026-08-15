@@ -12,7 +12,10 @@
 
 'use strict';
 
-const DIM = '\x1b[2m';
+// Bright-black (a fixed grey), not SGR2 "faint" — terminals implement faint
+// inconsistently (often blending toward black rather than the actual
+// background), which reads as illegible on a dark-grey terminal background.
+const DIM = '\x1b[90m';
 const RESET = '\x1b[0m';
 
 /**
