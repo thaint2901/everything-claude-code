@@ -145,7 +145,7 @@ function runStatusline() {
       // Build output
       const dirname = path.basename(dir);
       const modelLabel = effort ? `${model} · ${effort}` : model;
-      const segments = [`\x1b[90m${modelLabel}\x1b[0m`];
+      const segments = [`\x1b[38;5;244m${modelLabel}\x1b[0m`];
 
       if (task) {
         segments.push(`\x1b[1;97m${task}\x1b[0m`);
@@ -153,9 +153,9 @@ function runStatusline() {
       if (metricsStr) {
         segments.push(metricsStr);
       }
-      segments.push(`\x1b[90m${dirname}\x1b[0m`);
+      segments.push(`\x1b[38;5;244m${dirname}\x1b[0m`);
 
-      process.stdout.write(segments.join(' \x1b[90m\u2502\x1b[0m ') + ctx);
+      process.stdout.write(segments.join(' \x1b[38;5;244m\u2502\x1b[0m ') + ctx);
     } catch (err) {
       // stdout stays empty so a failed render shows a blank status line rather
       // than junk, but .claude/rules/node.md wants the reason on stderr —

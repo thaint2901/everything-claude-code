@@ -12,10 +12,13 @@
 
 'use strict';
 
-// Bright-black (a fixed grey), not SGR2 "faint" — terminals implement faint
-// inconsistently (often blending toward black rather than the actual
-// background), which reads as illegible on a dark-grey terminal background.
-const DIM = '\x1b[90m';
+// 256-color grey, not SGR2 "faint" or the 16-color bright-black (SGR90) —
+// faint blends toward black instead of the real background on many
+// terminals, and bright-black is one of the 16 base colors themes commonly
+// remap (some map it too close to the default foreground to read as grey).
+// The 256-color palette is rarely remapped, so this renders as a genuine
+// fixed grey on a dark-grey terminal background.
+const DIM = '\x1b[38;5;244m';
 const RESET = '\x1b[0m';
 
 /**
