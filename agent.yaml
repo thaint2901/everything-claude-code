@@ -239,6 +239,7 @@ commands:
   - refactor-clean
   - resume-session
   - review-pr
+  - review-pr-loop
   - rust-build
   - rust-review
   - rust-test

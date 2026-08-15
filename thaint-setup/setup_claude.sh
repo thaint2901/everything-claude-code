@@ -605,11 +605,11 @@ patch_settings_statusline() {
 
   tmp="$(mktemp)"
   jq --arg cmd "$statusline_cmd" \
-    '.statusLine = { "type": "command", "command": $cmd }' \
+    '.statusLine = { "type": "command", "command": $cmd, "refreshInterval": 20 }' \
     "$settings" > "$tmp" \
     || die "jq failed to patch statusLine in $settings"
   mv "$tmp" "$settings"
-  log "patched settings.json (.statusLine -> ecc-statusline.js)"
+  log "patched settings.json (.statusLine -> ecc-statusline.js, refreshInterval 20s)"
 }
 
 # ── MCP catalog patch ───────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "totalCommands": 94,
+  "totalCommands": 95,
   "commands": [
     {
       "command": "aside",
@@ -861,6 +861,15 @@
       "path": "commands/resume-session.md"
     },
     {
+      "command": "review-pr-loop",
+      "description": "Bounded 3-round review-fix loop for an open PR — cite evidence for findings, fix CRITICAL/IMPORTANT, human confirms before push",
+      "type": "testing",
+      "primaryAgents": [],
+      "allAgents": [],
+      "skills": [],
+      "path": "commands/review-pr-loop.md"
+    },
+    {
       "command": "review-pr",
       "description": "Comprehensive PR review using specialized agents",
       "type": "testing",
@@ -1034,7 +1043,7 @@
       "planning": 2,
       "refactoring": 1,
       "review": 15,
-      "testing": 53
+      "testing": 54
     },
     "topAgents": [
       {

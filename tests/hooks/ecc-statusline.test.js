@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { formatDuration, buildContextBar, readCurrentTask, buildMetricsSegment } = require('../../scripts/hooks/ecc-statusline');
+const { buildContextBar, readCurrentTask, buildMetricsSegment, buildModelLabel } = require('../../scripts/hooks/ecc-statusline');
 
 // Test helper
 function test(name, fn) {
@@ -33,65 +33,6 @@ function runTests() {
 
   let passed = 0;
   let failed = 0;
-
-  // formatDuration tests
-  console.log('formatDuration:');
-
-  if (
-    test('null returns "?"', () => {
-      assert.strictEqual(formatDuration(null), '?');
-    })
-  )
-    passed++;
-  else failed++;
-
-  if (
-    test('undefined returns "?"', () => {
-      assert.strictEqual(formatDuration(undefined), '?');
-    })
-  )
-    passed++;
-  else failed++;
-
-  if (
-    test('timestamp 30 seconds ago ends with "s"', () => {
-      const ts = new Date(Date.now() - 30 * 1000).toISOString();
-      const result = formatDuration(ts);
-      assert.ok(result.endsWith('s'), `Expected ending in "s", got: ${result}`);
-    })
-  )
-    passed++;
-  else failed++;
-
-  if (
-    test('timestamp 5 minutes ago ends with "m"', () => {
-      const ts = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      const result = formatDuration(ts);
-      assert.ok(result.endsWith('m'), `Expected ending in "m", got: ${result}`);
-    })
-  )
-    passed++;
-  else failed++;
-
-  if (
-    test('timestamp 90 minutes ago contains "h"', () => {
-      const ts = new Date(Date.now() - 90 * 60 * 1000).toISOString();
-      const result = formatDuration(ts);
-      assert.ok(result.includes('h'), `Expected "h" in result, got: ${result}`);
-    })
-  )
-    passed++;
-  else failed++;
-
-  if (
-    test('future timestamp returns "?"', () => {
-      const ts = new Date(Date.now() + 60 * 1000).toISOString();
-      const result = formatDuration(ts);
-      assert.strictEqual(result, '?');
-    })
-  )
-    passed++;
-  else failed++;
 
   // buildContextBar tests
   console.log('\nbuildContextBar:');
@@ -232,19 +173,47 @@ function runTests() {
     passed++;
   else failed++;
 
+  // buildModelLabel
+  console.log('\nbuildModelLabel:');
+
+  if (
+    test('appends the effort level when present', () => {
+      assert.strictEqual(buildModelLabel('Opus 5', 'high'), 'Opus 5 · high');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('omits the separator when effort is absent', () => {
+      assert.strictEqual(buildModelLabel('Sonnet 5', undefined), 'Sonnet 5');
+    })
+  )
+    passed++;
+  else failed++;
+
   // buildMetricsSegment
   console.log('\nbuildMetricsSegment()\n');
 
   const NOW_MS = 1738425600000;
   // eslint-disable-next-line no-control-regex -- ANSI escapes are what these tests assert on
   const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
-  const BRIDGE = { total_cost_usd: 368.03, tool_count: 52, files_modified_count: 7 };
+  const BRIDGE = { total_cost_usd: 368.03 };
 
   if (
     test('rate limit replaces the dollar figure when present', () => {
       const out = buildMetricsSegment({ rate_limits: { five_hour: { used_percentage: 24, resets_at: NOW_MS / 1000 + 4320 } } }, BRIDGE, NOW_MS);
-      assert.strictEqual(stripAnsi(out), '5h 24% ↻1h12m 52t 7f');
+      assert.strictEqual(stripAnsi(out), '5h 24% (1h12m)');
       assert.ok(!out.includes('$'), 'cost must not appear alongside the rate limit');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('renders both 5h and 7d windows when both are present', () => {
+      const out = buildMetricsSegment({ rate_limits: { five_hour: { used_percentage: 6 }, seven_day: { used_percentage: 41 } } }, BRIDGE, NOW_MS);
+      assert.strictEqual(stripAnsi(out), '5h 6%  7d 41%');
     })
   )
     passed++;
@@ -253,7 +222,7 @@ function runTests() {
   if (
     test('without rate limits it falls back to the native stdin cost', () => {
       const out = buildMetricsSegment({ cost: { total_cost_usd: 1.5 } }, BRIDGE, NOW_MS);
-      assert.strictEqual(stripAnsi(out), '$1.50 52t 7f');
+      assert.strictEqual(stripAnsi(out), '$1.50');
     })
   )
     passed++;
@@ -262,7 +231,7 @@ function runTests() {
   if (
     test('with neither, it falls back to the bridge cost', () => {
       const out = buildMetricsSegment({}, BRIDGE, NOW_MS);
-      assert.strictEqual(stripAnsi(out), '$368.03 52t 7f');
+      assert.strictEqual(stripAnsi(out), '$368.03');
     })
   )
     passed++;
@@ -271,7 +240,7 @@ function runTests() {
   if (
     test('a null five_hour window falls through to cost rather than blanking', () => {
       const out = buildMetricsSegment({ rate_limits: { five_hour: null } }, BRIDGE, NOW_MS);
-      assert.strictEqual(stripAnsi(out), '$368.03 52t 7f');
+      assert.strictEqual(stripAnsi(out), '$368.03');
     })
   )
     passed++;

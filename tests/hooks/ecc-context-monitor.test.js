@@ -139,7 +139,7 @@ function runTests() {
       try {
         writeBridgeAtomic(sessionId, {
           context_remaining_pct: 30,
-          last_timestamp: new Date().toISOString()
+          context_remaining_pct_ts: new Date().toISOString()
         });
         const first = JSON.parse(run(input));
         const firstMessage = first.hookSpecificOutput.additionalContext;
@@ -150,6 +150,32 @@ function runTests() {
         // (readWarnState/writeWarnState) must suppress the repeat.
         const second = run(input);
         assert.strictEqual(second, input, `Expected the repeat to be suppressed. Got: ${second}`);
+      } finally {
+        fs.rmSync(getBridgePath(sessionId), { force: true });
+        fs.rmSync(warnPath, { force: true });
+      }
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('a recent last_timestamp does not paper over a stale context_remaining_pct_ts', () => {
+      // ecc-metrics-bridge.js refreshes last_timestamp on every tool call,
+      // independent of ecc-statusline.js's context_remaining_pct writes — a
+      // stopped/erroring statusline must not have its (now stale) context
+      // reading treated as fresh just because tool calls kept flowing.
+      const sessionId = `ctx-monitor-stale-pct-${process.pid}-${Date.now()}`;
+      const input = JSON.stringify({ session_id: sessionId, tool_name: 'Bash' });
+      const warnPath = path.join(os.tmpdir(), `ecc-ctx-warn-${sessionId}.json`);
+      try {
+        writeBridgeAtomic(sessionId, {
+          context_remaining_pct: 20,
+          context_remaining_pct_ts: new Date(Date.now() - 90 * 1000).toISOString(),
+          last_timestamp: new Date().toISOString()
+        });
+        const result = run(input);
+        assert.strictEqual(result, input, `Expected the stale context reading to be nulled out, suppressing the CRITICAL warning. Got: ${result}`);
       } finally {
         fs.rmSync(getBridgePath(sessionId), { force: true });
         fs.rmSync(warnPath, { force: true });
@@ -240,7 +266,10 @@ function runTests() {
   if (
     test('cost warnings can be suppressed without hiding context warnings', () => {
       const warnings = evaluateConditions({ total_cost_usd: 55, context_remaining_pct: 20 }, { costWarnings: false });
-      assert.strictEqual(warnings.find(w => w.type === 'cost'), undefined);
+      assert.strictEqual(
+        warnings.find(w => w.type === 'cost'),
+        undefined
+      );
       const ctx = warnings.find(w => w.type === 'context');
       assert.ok(ctx, 'Expected context warning to remain enabled');
       assert.strictEqual(ctx.severity, 3);
@@ -258,7 +287,7 @@ function runTests() {
         writeBridgeAtomic(sessionId, {
           context_remaining_pct: 20,
           total_cost_usd: 55,
-          last_timestamp: new Date().toISOString()
+          context_remaining_pct_ts: new Date().toISOString()
         });
         const result = withEnv('ECC_CONTEXT_MONITOR_COST_WARNINGS', 'off', () => JSON.parse(run(input)));
         const message = result.hookSpecificOutput.additionalContext;
@@ -275,10 +304,22 @@ function runTests() {
 
   if (
     test('cost warning env defaults on and accepts false-like values', () => {
-      assert.strictEqual(withEnv('ECC_CONTEXT_MONITOR_COST_WARNINGS', undefined, () => costWarningsEnabled()), true);
-      assert.strictEqual(withEnv('ECC_CONTEXT_MONITOR_COST_WARNINGS', 'false', () => costWarningsEnabled()), false);
-      assert.strictEqual(withEnv('ECC_CONTEXT_MONITOR_COST_WARNINGS', '0', () => costWarningsEnabled()), false);
-      assert.strictEqual(withEnv('ECC_CONTEXT_MONITOR_COST_WARNINGS', 'yes', () => costWarningsEnabled()), true);
+      assert.strictEqual(
+        withEnv('ECC_CONTEXT_MONITOR_COST_WARNINGS', undefined, () => costWarningsEnabled()),
+        true
+      );
+      assert.strictEqual(
+        withEnv('ECC_CONTEXT_MONITOR_COST_WARNINGS', 'false', () => costWarningsEnabled()),
+        false
+      );
+      assert.strictEqual(
+        withEnv('ECC_CONTEXT_MONITOR_COST_WARNINGS', '0', () => costWarningsEnabled()),
+        false
+      );
+      assert.strictEqual(
+        withEnv('ECC_CONTEXT_MONITOR_COST_WARNINGS', 'yes', () => costWarningsEnabled()),
+        true
+      );
     })
   )
     passed++;

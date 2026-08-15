@@ -84,7 +84,11 @@ function writeWarnState(sessionId, state) {
   try {
     renameWithRetry(tmp, target);
   } catch (err) {
-    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
     throw err;
   }
 }
@@ -216,17 +220,24 @@ function run(rawInput) {
   try {
     const input = rawInput.trim() ? JSON.parse(rawInput) : {};
 
-    const sessionId = sanitizeSessionId(input.session_id) || sanitizeSessionId(process.env.ECC_SESSION_ID) || sanitizeSessionId(process.env.CLAUDE_CODE_SESSION_ID) || sanitizeSessionId(process.env.CLAUDE_SESSION_ID);
+    const sessionId =
+      sanitizeSessionId(input.session_id) || sanitizeSessionId(process.env.ECC_SESSION_ID) || sanitizeSessionId(process.env.CLAUDE_CODE_SESSION_ID) || sanitizeSessionId(process.env.CLAUDE_SESSION_ID);
 
     if (!sessionId) return rawInput;
 
     const bridge = readBridge(sessionId);
     if (!bridge) return rawInput;
 
-    // Stale check for context warnings
+    // Stale check for context warnings. Gated on context_remaining_pct_ts
+    // (stamped by ecc-statusline.js when it writes context_remaining_pct),
+    // not bridge.last_timestamp — that field is refreshed by
+    // ecc-metrics-bridge.js on every tool call, independent of whether
+    // context_remaining_pct itself was recently updated. Using it here would
+    // let a stopped/erroring statusline keep reading as fresh forever, as
+    // long as tool calls kept flowing.
     const now = Math.floor(Date.now() / 1000);
-    const lastTs = bridge.last_timestamp ? Math.floor(new Date(bridge.last_timestamp).getTime() / 1000) : 0;
-    const isStale = lastTs > 0 && now - lastTs > STALE_SECONDS;
+    const pctTs = bridge.context_remaining_pct_ts ? Math.floor(new Date(bridge.context_remaining_pct_ts).getTime() / 1000) : 0;
+    const isStale = pctTs > 0 && now - pctTs > STALE_SECONDS;
 
     // If bridge is stale, null out context data (still check cost/scope/loop)
     const evalBridge = isStale ? { ...bridge, context_remaining_pct: null } : bridge;

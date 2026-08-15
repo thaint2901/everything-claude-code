@@ -20,11 +20,14 @@ const {
   DEFAULT_CONTEXT_INTERVAL_TOKENS,
   readLatestContextTokens,
   resolveContextWindowTokens,
+  resolveWindowFromBridge,
+  resolveWindowTokens,
   resolveContextThreshold,
   resolveContextInterval,
   computeContextBucket,
   formatWindowLabel
 } = require('../../scripts/lib/transcript-context');
+const { writeBridgeAtomic, getBridgePath } = require('../../scripts/lib/session-bridge');
 
 console.log('=== Testing transcript-context.js ===\n');
 
@@ -288,6 +291,94 @@ test('labels the standard and large windows', () => {
   assert.strictEqual(formatWindowLabel(STANDARD_CONTEXT_WINDOW_TOKENS), '200k');
   assert.strictEqual(formatWindowLabel(LARGE_CONTEXT_WINDOW_TOKENS), '1M');
 });
+
+// ── resolveWindowFromBridge / resolveWindowTokens ──
+console.log('\nresolveWindowFromBridge:');
+
+let bridgeSeq = 0;
+const bridgeSessionIds = [];
+
+function freshBridgeSession(bridgeData) {
+  bridgeSeq += 1;
+  const sessionId = `transcript-context-bridge-${process.pid}-${bridgeSeq}`;
+  bridgeSessionIds.push(sessionId);
+  writeBridgeAtomic(sessionId, bridgeData);
+  return sessionId;
+}
+
+test('derives the window from a fresh bridge remaining percentage', () => {
+  const sessionId = freshBridgeSession({
+    context_remaining_pct: 20,
+    context_remaining_pct_ts: new Date().toISOString()
+  });
+  // 161700 tokens at 80% used (20% remaining) => window ~= 202125
+  assert.strictEqual(resolveWindowFromBridge(sessionId, 161700), 202125);
+});
+
+test('returns null when there is no bridge file', () => {
+  assert.strictEqual(resolveWindowFromBridge('no-such-session', 161700), null);
+});
+
+test('returns null when context_remaining_pct_ts is older than 60s', () => {
+  const staleTs = new Date(Date.now() - 90 * 1000).toISOString();
+  const sessionId = freshBridgeSession({
+    context_remaining_pct: 20,
+    context_remaining_pct_ts: staleTs
+  });
+  assert.strictEqual(resolveWindowFromBridge(sessionId, 161700), null);
+});
+
+test('a recent last_timestamp does not paper over a stale context_remaining_pct_ts', () => {
+  // ecc-metrics-bridge.js refreshes last_timestamp on every tool call,
+  // independent of ecc-statusline.js's context_remaining_pct writes — a
+  // stopped/erroring statusline must not read as fresh just because tool
+  // calls kept flowing.
+  const staleTs = new Date(Date.now() - 90 * 1000).toISOString();
+  const sessionId = freshBridgeSession({
+    context_remaining_pct: 20,
+    context_remaining_pct_ts: staleTs,
+    last_timestamp: new Date().toISOString()
+  });
+  assert.strictEqual(resolveWindowFromBridge(sessionId, 161700), null);
+});
+
+test('returns null when context_remaining_pct is missing', () => {
+  const sessionId = freshBridgeSession({ context_remaining_pct_ts: new Date().toISOString() });
+  assert.strictEqual(resolveWindowFromBridge(sessionId, 161700), null);
+});
+
+test('returns null when context_remaining_pct is out of range', () => {
+  const sessionId = freshBridgeSession({
+    context_remaining_pct: 100,
+    context_remaining_pct_ts: new Date().toISOString()
+  });
+  assert.strictEqual(resolveWindowFromBridge(sessionId, 161700), null);
+});
+
+console.log('\nresolveWindowTokens:');
+
+test('prefers the live bridge over the model-id table', () => {
+  const sessionId = freshBridgeSession({
+    context_remaining_pct: 20,
+    context_remaining_pct_ts: new Date().toISOString()
+  });
+  // Without the bridge, a `[1m]` model would resolve to the flat 1M window.
+  // With a fresh bridge, the derived value wins instead.
+  assert.strictEqual(resolveWindowTokens(sessionId, 161700, 'claude-opus-4-5[1m]'), 202125);
+});
+
+test('falls back to resolveContextWindowTokens when the bridge is absent', () => {
+  assert.strictEqual(resolveWindowTokens('no-such-session', 161700, 'claude-opus-4-5[1m]'), LARGE_CONTEXT_WINDOW_TOKENS);
+  assert.strictEqual(resolveWindowTokens('no-such-session', 161700, 'claude-sonnet-4-6'), STANDARD_CONTEXT_WINDOW_TOKENS);
+});
+
+for (const sessionId of bridgeSessionIds) {
+  try {
+    fs.unlinkSync(getBridgePath(sessionId));
+  } catch {
+    /* ignore */
+  }
+}
 
 // Cleanup
 for (const filePath of cleanupPaths) {
