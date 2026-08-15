@@ -2,7 +2,7 @@
 /**
  * ECC Statusline — statusLine command
  *
- * Displays: model | task | budget Nt Nf Nm | dir ██░░ N%
+ * Displays: model[ · effort] | task | 5h/7d rate limit (or $cost) | dir ██░░ N%
  *
  * Registered in settings.json under "statusLine", not in hooks.json.
  * Reads bridge file from ecc-metrics-bridge.js and stdin from Claude Code runtime.
@@ -17,23 +17,6 @@ const { sanitizeSessionId, readBridge, writeBridgeAtomic } = require('../lib/ses
 const { buildRateLimitSegment } = require('../lib/rate-limit-format');
 
 const MAX_STDIN = 1024 * 1024;
-
-/**
- * Format duration from ISO timestamp to now.
- * @param {string} isoTimestamp
- * @returns {string} e.g. "5s", "12m", "1h23m"
- */
-function formatDuration(isoTimestamp) {
-  if (!isoTimestamp) return '?';
-  const elapsed = Math.floor((Date.now() - new Date(isoTimestamp).getTime()) / 1000);
-  if (elapsed < 0) return '?';
-  if (elapsed < 60) return `${elapsed}s`;
-  const mins = Math.floor(elapsed / 60);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  const remMins = mins % 60;
-  return remMins > 0 ? `${hours}h${remMins}m` : `${hours}h`;
-}
 
 /**
  * Build context progress bar with ANSI colors.
@@ -92,14 +75,14 @@ function readCurrentTask(sessionId) {
 }
 
 /**
- * Build the middle segment: remaining budget, then session counters.
+ * Build the middle segment: rate-limit windows, or a dollar cost fallback.
  *
- * LOCAL (thaint): budget prefers `rate_limits.five_hour` over a dollar figure.
- * On a Claude.ai subscription nothing is billed per token, so the dollars are
- * noise while the rolling 5-hour window is the limit actually reached. Cost is
- * still shown when `rate_limits` is absent (API-key users, or before the first
- * API response), taking the native stdin `cost` field first so the segment
- * works even before ecc-metrics-bridge has written a bridge file.
+ * LOCAL (thaint): prefers `rate_limits` (5h + 7d) over a dollar figure. On a
+ * Claude.ai subscription nothing is billed per token, so the dollars are
+ * noise while the rolling windows are the limits actually reached. Cost is
+ * still shown when `rate_limits` is absent (API-key users, or before the
+ * first API response), taking the native stdin `cost` field first so the
+ * segment works even before ecc-metrics-bridge has written a bridge file.
  *
  * @param {object} data - Parsed stdin payload
  * @param {object|null} bridge - Metrics bridge contents, if any
@@ -107,28 +90,15 @@ function readCurrentTask(sessionId) {
  * @returns {string} Colored segment, or empty string
  */
 function buildMetricsSegment(data, bridge, nowMs) {
-  const segments = [];
-  const counters = [];
-
   const rateLimit = buildRateLimitSegment(data?.rate_limits, nowMs);
-  if (rateLimit) {
-    segments.push(rateLimit);
-  } else {
-    const nativeCost = data?.cost?.total_cost_usd;
-    const bridgeCost = bridge?.total_cost_usd;
-    const cost = typeof nativeCost === 'number' && nativeCost > 0 ? nativeCost : bridgeCost;
-    if (typeof cost === 'number' && cost > 0) counters.push(`$${cost.toFixed(2)}`);
-  }
+  if (rateLimit) return rateLimit;
 
-  if (bridge) {
-    if (bridge.tool_count > 0) counters.push(`${bridge.tool_count}t`);
-    if (bridge.files_modified_count > 0) counters.push(`${bridge.files_modified_count}f`);
-    const dur = formatDuration(bridge.first_timestamp);
-    if (dur !== '?') counters.push(dur);
-  }
+  const nativeCost = data?.cost?.total_cost_usd;
+  const bridgeCost = bridge?.total_cost_usd;
+  const cost = typeof nativeCost === 'number' && nativeCost > 0 ? nativeCost : bridgeCost;
+  if (typeof cost === 'number' && cost > 0) return `\x1b[38;5;117m$${cost.toFixed(2)}\x1b[0m`;
 
-  if (counters.length > 0) segments.push(`\x1b[38;5;117m${counters.join(' ')}\x1b[0m`);
-  return segments.join(' ');
+  return '';
 }
 
 function runStatusline() {
@@ -145,6 +115,7 @@ function runStatusline() {
     try {
       const data = JSON.parse(input);
       const model = data.model?.display_name || 'Claude';
+      const effort = data.effort?.level;
       const dir = data.workspace?.current_dir || process.cwd();
       const session = data.session_id || '';
       const remaining = data.context_window?.remaining_percentage;
@@ -173,7 +144,8 @@ function runStatusline() {
 
       // Build output
       const dirname = path.basename(dir);
-      const segments = [`\x1b[2m${model}\x1b[0m`];
+      const modelLabel = effort ? `${model} · ${effort}` : model;
+      const segments = [`\x1b[2m${modelLabel}\x1b[0m`];
 
       if (task) {
         segments.push(`\x1b[1;97m${task}\x1b[0m`);
@@ -193,6 +165,6 @@ function runStatusline() {
   });
 }
 
-module.exports = { formatDuration, buildContextBar, readCurrentTask, buildMetricsSegment, MAX_STDIN };
+module.exports = { buildContextBar, readCurrentTask, buildMetricsSegment, MAX_STDIN };
 
 if (require.main === module) runStatusline();

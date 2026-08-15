@@ -42,10 +42,10 @@ In the order `main()` runs them:
 8. **Installs hooks-runtime** — runs the ECC `install.sh`, which copies the hook scripts without wiring them to any event
 9. **Wires the hook graph** — merges `hooks/hooks.json` into `.hooks` of `settings.json`, the only place Claude Code reads hooks from; keeps entries the graph does not carry, and skips itself when ECC is installed as a plugin
 10. **Applies this fork's hook-audit env defaults** — sets `env.ECC_DISABLED_HOOKS` and `env.ECC_GATEGUARD` in `settings.json`, only if unset (an existing value is kept, with a warning if it differs); see `thaint-setup/HOOK-CATALOG.md` for the rationale behind each disabled hook. `ECC_GATEGUARD=off` turns GateGuard off outright — unlike a new `disabled-hooks.txt` entry, it does reach an install that already exists, because this script has never written that key so the only-if-unset rule does not block it
-11. **Patches `settings.json`** — points `statusLine` at `~/.claude/scripts/hooks/ecc-statusline.js` (model, task, 5-hour budget, session counters, directory, context bar), keeping one you set by hand:
+11. **Patches `settings.json`** — points `statusLine` at `~/.claude/scripts/hooks/ecc-statusline.js` (model + effort level, task, 5-hour/7-day rate-limit budget, directory, context bar) and sets `refreshInterval: 5` (seconds) so it updates on a timer, not just on each response; keeps one you set by hand:
 
     ```text
-    Opus 5 (1M context) │ 5h 24% ↻1h11m 96t 11f 1h39m │ my-worktree ████░░░░░░ 46%
+    Opus 5 · high │ 5h 24% ⏳1h11m  7d 41% ⏳3d │ my-worktree ████░░░░░░ 46%
     ```
 
 12. **Installs Telegram hook** — writes `~/.claude/scripts/hooks/telegram-notify.js` and patches `settings.json`
