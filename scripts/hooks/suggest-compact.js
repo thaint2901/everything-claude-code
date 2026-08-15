@@ -198,11 +198,17 @@ function run(inputOrRaw, _options = {}) {
   // fallbacks) and transcript_path points at the session transcript JSONL
   // used by the context-size signal.
   const rawSessionId = input && typeof input.session_id === 'string' && input.session_id ? input.session_id : process.env.CLAUDE_CODE_SESSION_ID || process.env.CLAUDE_SESSION_ID || 'default';
-  // Shared with session-bridge.js's own sanitizer so a bridge file written by
-  // ecc-statusline.js/ecc-metrics-bridge.js resolves to the same path here —
-  // a local, differently-behaved regex would silently miss every bridge
-  // lookup for a session ID containing a character outside [a-zA-Z0-9_-].
-  const sessionId = sanitizeSessionId(rawSessionId) || 'default';
+  // Local temp-file naming only needs uniqueness, not path-traversal
+  // rejection, so this keeps its own strip-based sanitizer rather than
+  // session-bridge.js's sanitizeSessionId — that one rejects (not strips) any
+  // ID containing `/`, `\`, or `..`, which would collapse distinct malformed
+  // IDs into the same 'default' counter/bucket files.
+  const sessionId = rawSessionId.replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
+  // Bridge lookups are a separate concern: they must match the sanitized ID
+  // ecc-statusline.js/ecc-metrics-bridge.js used to name the bridge file, so
+  // this uses session-bridge.js's own sanitizeSessionId instead of the local
+  // regex above — a mismatch here would silently miss every bridge lookup.
+  const bridgeSessionId = sanitizeSessionId(rawSessionId) || 'default';
   const transcriptPath = input && typeof input.transcript_path === 'string' ? input.transcript_path : '';
 
   const tempDir = getTempDir();
@@ -223,7 +229,7 @@ function run(inputOrRaw, _options = {}) {
   // Primary signal (#2155): real context size from the transcript's latest
   // usage record. Fires at a window-scaled token threshold and re-fires only
   // after the context grows by another interval step.
-  const contextSuggestion = buildContextSuggestion(transcriptPath, bucketFile, process.env, sessionId);
+  const contextSuggestion = buildContextSuggestion(transcriptPath, bucketFile, process.env, bridgeSessionId);
   if (contextSuggestion) {
     messages.push(contextSuggestion);
   }
