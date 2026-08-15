@@ -25,21 +25,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const {
-  getTempDir,
-  writeFile,
-  readStdinJson,
-  log,
-  output
-} = require('../lib/utils');
-const {
-  readLatestContextTokens,
-  resolveContextWindowTokens,
-  resolveContextThreshold,
-  resolveContextInterval,
-  computeContextBucket,
-  formatWindowLabel
-} = require('../lib/transcript-context');
+const { getTempDir, writeFile, readStdinJson, log, output } = require('../lib/utils');
+const { readLatestContextTokens, resolveWindowTokens, resolveContextThreshold, resolveContextInterval, computeContextBucket, formatWindowLabel } = require('../lib/transcript-context');
 
 const COUNTER_FILE_PREFIX = 'claude-tool-count-';
 const CONTEXT_BUCKET_FILE_PREFIX = 'claude-context-bucket-';
@@ -127,9 +114,7 @@ function incrementToolCallCount(counterFile) {
         const parsed = parseInt(buf.toString('utf8', 0, bytesRead).trim(), 10);
         // Clamp to reasonable range — corrupted files could contain huge values
         // that pass Number.isFinite() (e.g., parseInt('9'.repeat(30)) => 1e+29)
-        count = (Number.isFinite(parsed) && parsed > 0 && parsed <= 1000000)
-          ? parsed + 1
-          : 1;
+        count = Number.isFinite(parsed) && parsed > 0 && parsed <= 1000000 ? parsed + 1 : 1;
       }
       // Truncate and write new value
       fs.ftruncateSync(fd, 0);
@@ -166,12 +151,12 @@ function readLastContextBucket(bucketFile) {
  * Never throws — any transcript or state-file failure silently disables the
  * signal so the hook keeps its always-exit-0 contract.
  */
-function buildContextSuggestion(transcriptPath, bucketFile, env) {
+function buildContextSuggestion(transcriptPath, bucketFile, env, sessionId) {
   try {
     const usage = readLatestContextTokens(transcriptPath);
     if (!usage) return null;
 
-    const windowTokens = resolveContextWindowTokens(usage.tokens, usage.model);
+    const windowTokens = resolveWindowTokens(sessionId, usage.tokens, usage.model);
     const threshold = resolveContextThreshold(env, windowTokens);
     if (threshold <= 0) return null; // COMPACT_CONTEXT_THRESHOLD=0 disables
 
@@ -203,9 +188,7 @@ function buildContextSuggestion(transcriptPath, bucketFile, env) {
 function run(inputOrRaw, _options = {}) {
   let input;
   try {
-    input = typeof inputOrRaw === 'string'
-      ? (inputOrRaw.trim() ? JSON.parse(inputOrRaw) : {})
-      : (inputOrRaw || {});
+    input = typeof inputOrRaw === 'string' ? (inputOrRaw.trim() ? JSON.parse(inputOrRaw) : {}) : inputOrRaw || {};
   } catch {
     input = {};
   }
@@ -213,11 +196,9 @@ function run(inputOrRaw, _options = {}) {
   // session_id is the canonical field (legacy env var, then 'default', as
   // fallbacks) and transcript_path points at the session transcript JSONL
   // used by the context-size signal.
-  const rawSessionId = (input && typeof input.session_id === 'string' && input.session_id)
-    ? input.session_id
-    : (process.env.CLAUDE_CODE_SESSION_ID || process.env.CLAUDE_SESSION_ID || 'default');
+  const rawSessionId = input && typeof input.session_id === 'string' && input.session_id ? input.session_id : process.env.CLAUDE_CODE_SESSION_ID || process.env.CLAUDE_SESSION_ID || 'default';
   const sessionId = rawSessionId.replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
-  const transcriptPath = (input && typeof input.transcript_path === 'string') ? input.transcript_path : '';
+  const transcriptPath = input && typeof input.transcript_path === 'string' ? input.transcript_path : '';
 
   const tempDir = getTempDir();
   const counterFile = path.join(tempDir, `${COUNTER_FILE_PREFIX}${sessionId}`);
@@ -228,9 +209,7 @@ function run(inputOrRaw, _options = {}) {
   cleanupOldCounters(tempDir, getCounterRetentionDays(), [counterFile, bucketFile]);
 
   const rawThreshold = parseInt(process.env.COMPACT_THRESHOLD || '50', 10);
-  const threshold = Number.isFinite(rawThreshold) && rawThreshold > 0 && rawThreshold <= 10000
-    ? rawThreshold
-    : 50;
+  const threshold = Number.isFinite(rawThreshold) && rawThreshold > 0 && rawThreshold <= 10000 ? rawThreshold : 50;
 
   const count = incrementToolCallCount(counterFile);
 
@@ -239,7 +218,7 @@ function run(inputOrRaw, _options = {}) {
   // Primary signal (#2155): real context size from the transcript's latest
   // usage record. Fires at a window-scaled token threshold and re-fires only
   // after the context grows by another interval step.
-  const contextSuggestion = buildContextSuggestion(transcriptPath, bucketFile, process.env);
+  const contextSuggestion = buildContextSuggestion(transcriptPath, bucketFile, process.env, sessionId);
   if (contextSuggestion) {
     messages.push(contextSuggestion);
   }

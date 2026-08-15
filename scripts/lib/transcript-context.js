@@ -18,6 +18,13 @@
  */
 
 const fs = require('fs');
+const { readBridge } = require('./session-bridge');
+
+// How stale the session bridge (written by ecc-statusline.js from Claude
+// Code's own context_window.remaining_percentage) can be before it is no
+// longer trusted for window derivation. Matches ecc-context-monitor.js's
+// own staleness window for the same bridge file.
+const BRIDGE_STALE_SECONDS = 60;
 
 const STANDARD_CONTEXT_WINDOW_TOKENS = 200000;
 const LARGE_CONTEXT_WINDOW_TOKENS = 1000000;
@@ -194,6 +201,56 @@ function resolveContextWindowTokens(tokens, model) {
 }
 
 /**
+ * Derive the context window size from the live session bridge, when fresh.
+ *
+ * The bridge (`ecc-metrics-<sessionId>.json`) is written by ecc-statusline.js
+ * from Claude Code's own `context_window.remaining_percentage` — the
+ * harness's real resolved window (e.g. 967k for a long-context session),
+ * not a guess. This sidesteps resolveContextWindowTokens()'s static model-id
+ * table, which goes stale for any model added after it was written.
+ *
+ * Returns null when there is no bridge, it is older than
+ * BRIDGE_STALE_SECONDS, or its remaining percentage is missing/out of
+ * range — callers fall back to resolveContextWindowTokens().
+ */
+function resolveWindowFromBridge(sessionId, tokens) {
+  if (!sessionId || !Number.isFinite(tokens) || tokens <= 0) {
+    return null;
+  }
+
+  let bridge;
+  try {
+    bridge = readBridge(sessionId);
+  } catch {
+    return null;
+  }
+  if (!bridge) return null;
+
+  const lastTs = bridge.last_timestamp ? new Date(bridge.last_timestamp).getTime() : 0;
+  if (!Number.isFinite(lastTs) || lastTs <= 0 || (Date.now() - lastTs) / 1000 > BRIDGE_STALE_SECONDS) {
+    return null;
+  }
+
+  const remaining = bridge.context_remaining_pct;
+  if (typeof remaining !== 'number' || !Number.isFinite(remaining) || remaining < 0 || remaining >= 100) {
+    return null;
+  }
+
+  const usedFraction = (100 - remaining) / 100;
+  const window = Math.round(tokens / usedFraction);
+  return Number.isFinite(window) && window > 0 ? window : null;
+}
+
+/**
+ * Resolve the context window size: prefer the live bridge (accurate, no
+ * guessing), falling back to resolveContextWindowTokens() when the bridge is
+ * absent or stale.
+ */
+function resolveWindowTokens(sessionId, tokens, model) {
+  return resolveWindowFromBridge(sessionId, tokens) || resolveContextWindowTokens(tokens, model);
+}
+
+/**
  * Resolve the context-size suggestion threshold (tokens).
  * `COMPACT_CONTEXT_THRESHOLD=0` disables the context signal entirely;
  * other invalid values fall back to the window-scaled default.
@@ -254,6 +311,8 @@ module.exports = {
   DEFAULT_TRANSCRIPT_TAIL_BYTES,
   readLatestContextTokens,
   resolveContextWindowTokens,
+  resolveWindowFromBridge,
+  resolveWindowTokens,
   resolveContextThreshold,
   resolveContextInterval,
   computeContextBucket,
