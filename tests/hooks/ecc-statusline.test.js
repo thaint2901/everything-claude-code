@@ -203,7 +203,7 @@ function runTests() {
   if (
     test('rate limit replaces the dollar figure when present', () => {
       const out = buildMetricsSegment({ rate_limits: { five_hour: { used_percentage: 24, resets_at: NOW_MS / 1000 + 4320 } } }, BRIDGE, NOW_MS);
-      assert.strictEqual(stripAnsi(out), '5h 24% ⏳1h12m');
+      assert.strictEqual(stripAnsi(out), '5h 24% (1h12m)');
       assert.ok(!out.includes('$'), 'cost must not appear alongside the rate limit');
     })
   )

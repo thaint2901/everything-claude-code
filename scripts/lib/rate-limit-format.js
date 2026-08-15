@@ -69,11 +69,12 @@ function formatCountdown(epochSeconds, nowMs) {
 }
 
 /**
- * Render one rate-limit window, e.g. "5h 24% ⏳1h12m".
+ * Render one rate-limit window, e.g. "5h 24% (1h12m)".
  *
- * `⏳` (not `↻`, which reads as "refresh/cycle") marks the countdown as time
- * left until reset, and stays dim rather than severity-coloured: when the
- * window is nearly full, the time left is reassurance, not another alarm.
+ * The countdown is parenthesised (not `↻`, which reads as "refresh/cycle",
+ * and not an emoji — this repo's unicode-safety check forbids those in
+ * source) and stays dim rather than severity-coloured: when the window is
+ * nearly full, the time left is reassurance, not another alarm.
  *
  * @param {string} label - "5h" or "7d"
  * @param {object} window - {used_percentage, resets_at}, or falsy
@@ -90,14 +91,14 @@ function formatWindow(label, window, nowMs) {
   let out = `${severityColor(used)}${label} ${pct}%${RESET}`;
 
   const countdown = formatCountdown(window.resets_at, nowMs);
-  if (countdown) out += ` ${DIM}⏳${countdown}${RESET}`;
+  if (countdown) out += ` ${DIM}(${countdown})${RESET}`;
 
   return out;
 }
 
 /**
  * Render the 5-hour and 7-day rate-limit segments, e.g.
- * "5h 24% ⏳1h12m  7d 41% ⏳3d".
+ * "5h 24% (1h12m)  7d 41% (3d)".
  *
  * Returns "" whenever both windows are missing/unusable — `rate_limits` is
  * only present for Claude.ai subscribers, and only after the first API

@@ -100,7 +100,7 @@ function runTests() {
   if (
     test('renders percentage and countdown', () => {
       const out = buildRateLimitSegment({ five_hour: { used_percentage: 23.5, resets_at: NOW_SEC + 4320 } }, NOW_MS);
-      assert.strictEqual(strip(out), '5h 24% ⏳1h12m');
+      assert.strictEqual(strip(out), '5h 24% (1h12m)');
     })
   )
     passed++;
@@ -115,7 +115,7 @@ function runTests() {
         },
         NOW_MS
       );
-      assert.strictEqual(strip(out), '5h 6% ⏳1m  7d 41% ⏳3d');
+      assert.strictEqual(strip(out), '5h 6% (1m)  7d 41% (3d)');
     })
   )
     passed++;
@@ -124,7 +124,7 @@ function runTests() {
   if (
     test('renders 7d alone when 5h is absent', () => {
       const out = buildRateLimitSegment({ seven_day: { used_percentage: 41, resets_at: NOW_SEC + 3 * 86400 } }, NOW_MS);
-      assert.strictEqual(strip(out), '7d 41% ⏳3d');
+      assert.strictEqual(strip(out), '7d 41% (3d)');
     })
   )
     passed++;
@@ -182,7 +182,7 @@ function runTests() {
   if (
     test('countdown is a fixed grey, so the reset time does not read as urgent', () => {
       const out = buildRateLimitSegment({ five_hour: { used_percentage: 90, resets_at: NOW_SEC + 60 } }, NOW_MS);
-      assert.ok(out.includes('\x1b[38;5;244m⏳'), 'countdown should open with the grey code');
+      assert.ok(out.includes('\x1b[38;5;244m('), 'countdown should open with the grey code');
     })
   )
     passed++;

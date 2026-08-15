@@ -45,7 +45,7 @@ In the order `main()` runs them:
 11. **Patches `settings.json`** — points `statusLine` at `~/.claude/scripts/hooks/ecc-statusline.js` (model + effort level, task, 5-hour/7-day rate-limit budget, directory, context bar) and sets `refreshInterval: 20` (seconds) so it updates on a timer, not just on each response — 20s balances a live-feeling rate-limit countdown against how often it re-samples cost/context-window usage, which jitter visibly at 5s during heavy background subagent activity since Claude Code gives the script no way to tell a timer tick from a real turn boundary; keeps one you set by hand:
 
     ```text
-    Opus 5 · high │ 5h 24% ⏳1h11m  7d 41% ⏳3d │ my-worktree ████░░░░░░ 46%
+    Opus 5 · high │ 5h 24% (1h11m)  7d 41% (3d) │ my-worktree ████░░░░░░ 46%
     ```
 
 12. **Installs Telegram hook** — writes `~/.claude/scripts/hooks/telegram-notify.js` and patches `settings.json`
