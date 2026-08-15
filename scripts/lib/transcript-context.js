@@ -209,8 +209,8 @@ function resolveContextWindowTokens(tokens, model) {
  * not a guess. This sidesteps resolveContextWindowTokens()'s static model-id
  * table, which goes stale for any model added after it was written.
  *
- * Returns null when there is no bridge, it is older than
- * BRIDGE_STALE_SECONDS, or its remaining percentage is missing/out of
+ * Returns null when there is no bridge, its `context_remaining_pct` is
+ * older than BRIDGE_STALE_SECONDS, or the percentage is missing/out of
  * range — callers fall back to resolveContextWindowTokens().
  */
 function resolveWindowFromBridge(sessionId, tokens) {
@@ -226,8 +226,13 @@ function resolveWindowFromBridge(sessionId, tokens) {
   }
   if (!bridge) return null;
 
-  const lastTs = bridge.last_timestamp ? new Date(bridge.last_timestamp).getTime() : 0;
-  if (!Number.isFinite(lastTs) || lastTs <= 0 || (Date.now() - lastTs) / 1000 > BRIDGE_STALE_SECONDS) {
+  // Gated on context_remaining_pct_ts, not bridge.last_timestamp: that field
+  // is refreshed by ecc-metrics-bridge.js on every tool call, which keeps
+  // ticking even if ecc-statusline.js (the only writer of
+  // context_remaining_pct) has stopped running or erroring — checking it
+  // here would make a stale percentage read as fresh forever.
+  const pctTs = bridge.context_remaining_pct_ts ? new Date(bridge.context_remaining_pct_ts).getTime() : 0;
+  if (!Number.isFinite(pctTs) || pctTs <= 0 || (Date.now() - pctTs) / 1000 > BRIDGE_STALE_SECONDS) {
     return null;
   }
 

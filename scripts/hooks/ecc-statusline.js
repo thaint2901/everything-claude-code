@@ -135,9 +135,14 @@ function runStatusline() {
       const sessionId = sanitizeSessionId(session);
       const bridge = sessionId ? readBridge(sessionId) : null;
 
-      // Write context % back to bridge for context-monitor
+      // Write context % back to bridge for context-monitor. Stamped with its
+      // own timestamp because bridge.last_timestamp is refreshed by
+      // ecc-metrics-bridge.js on every tool call, independent of whether this
+      // script ran recently — using it here would let a stopped/erroring
+      // statusline still read as "fresh" as long as tool calls kept flowing.
       if (sessionId && bridge && remaining !== null && remaining !== undefined) {
         bridge.context_remaining_pct = remaining;
+        bridge.context_remaining_pct_ts = new Date().toISOString();
         try {
           writeBridgeAtomic(sessionId, bridge);
         } catch {

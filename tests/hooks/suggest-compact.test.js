@@ -984,7 +984,7 @@ function runTests() {
       // silent instead — proof the window came from the bridge, not the static
       // table (which would give the 200k default for this model/token count).
       const transcript = writeTranscriptFixture(170000);
-      writeBridgeAtomic(ctx.sessionId, { context_remaining_pct: 83, last_timestamp: new Date().toISOString() });
+      writeBridgeAtomic(ctx.sessionId, { context_remaining_pct: 83, context_remaining_pct_ts: new Date().toISOString() });
       try {
         const result = runCompactWithInput({ session_id: ctx.sessionId, transcript_path: transcript });
         assert.strictEqual(result.stdout.trim(), '', `Expected bridge-derived 1M window to keep run silent. Got: "${result.stdout}"`);
