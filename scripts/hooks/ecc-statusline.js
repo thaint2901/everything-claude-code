@@ -89,6 +89,18 @@ function readCurrentTask(sessionId) {
  * @param {number} [nowMs] - Injectable clock, for tests
  * @returns {string} Colored segment, or empty string
  */
+/**
+ * Build the model-name segment label: "Model · effort" when the payload
+ * carries an effort level (models that support it), else just "Model".
+ *
+ * @param {string} model - Display name from data.model.display_name
+ * @param {string} [effort] - data.effort.level, e.g. "high"
+ * @returns {string}
+ */
+function buildModelLabel(model, effort) {
+  return effort ? `${model} · ${effort}` : model;
+}
+
 function buildMetricsSegment(data, bridge, nowMs) {
   const rateLimit = buildRateLimitSegment(data?.rate_limits, nowMs);
   if (rateLimit) return rateLimit;
@@ -144,7 +156,7 @@ function runStatusline() {
 
       // Build output
       const dirname = path.basename(dir);
-      const modelLabel = effort ? `${model} · ${effort}` : model;
+      const modelLabel = buildModelLabel(model, effort);
       const segments = [`\x1b[38;5;244m${modelLabel}\x1b[0m`];
 
       if (task) {
@@ -165,6 +177,6 @@ function runStatusline() {
   });
 }
 
-module.exports = { buildContextBar, readCurrentTask, buildMetricsSegment, MAX_STDIN };
+module.exports = { buildContextBar, readCurrentTask, buildMetricsSegment, buildModelLabel, MAX_STDIN };
 
 if (require.main === module) runStatusline();

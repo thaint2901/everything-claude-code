@@ -1007,6 +1007,49 @@ function runTests() {
   else failed++;
 
   if (
+    test('bridge lookup uses the bridge sanitizer, not the local counter-file sanitizer', () => {
+      // A raw session ID with a space diverges under the two sanitizers: the
+      // local strip-based one (counter/bucket file naming) drops the space
+      // entirely, while sanitizeSessionId (bridge lookups, shared with
+      // ecc-statusline.js's bridge-file naming) replaces it with "_". Neither
+      // result is "default", so a regression that reads the bridge under the
+      // local sessionId instead of bridgeSessionId would miss the bridge file
+      // entirely and this run would NOT stay silent.
+      const rawSessionId = 'test context 12345';
+      const bridgeSessionId = 'test_context_12345';
+      const transcript = writeTranscriptFixture(170000);
+      writeBridgeAtomic(bridgeSessionId, { context_remaining_pct: 83, context_remaining_pct_ts: new Date().toISOString() });
+      try {
+        const result = runCompactWithInput({ session_id: rawSessionId, transcript_path: transcript });
+        assert.strictEqual(result.stdout.trim(), '', `Expected the bridge (keyed on the sanitized ID) to be found and keep the run silent. Got: "${result.stdout}"`);
+      } finally {
+        try {
+          fs.unlinkSync(transcript);
+        } catch (_err) {
+          /* ignore */
+        }
+        try {
+          fs.unlinkSync(getBridgePath(bridgeSessionId));
+        } catch (_err) {
+          /* ignore */
+        }
+        try {
+          fs.unlinkSync(getCounterFilePath('testcontext12345'));
+        } catch (_err) {
+          /* ignore */
+        }
+        try {
+          fs.unlinkSync(getBucketFilePath('testcontext12345'));
+        } catch (_err) {
+          /* ignore */
+        }
+      }
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
     test('treats >200k observed tokens as a 1M window even without the [1m] marker', () => {
       const ctx = createContextContext();
       const transcript = writeTranscriptFixture(230000, 'claude-opus-4-5');

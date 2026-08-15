@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { buildContextBar, readCurrentTask, buildMetricsSegment } = require('../../scripts/hooks/ecc-statusline');
+const { buildContextBar, readCurrentTask, buildMetricsSegment, buildModelLabel } = require('../../scripts/hooks/ecc-statusline');
 
 // Test helper
 function test(name, fn) {
@@ -168,6 +168,25 @@ function runTests() {
         else process.env.CLAUDE_CONFIG_DIR = originalConfig;
         fs.rmSync(tmpConfig, { recursive: true, force: true });
       }
+    })
+  )
+    passed++;
+  else failed++;
+
+  // buildModelLabel
+  console.log('\nbuildModelLabel:');
+
+  if (
+    test('appends the effort level when present', () => {
+      assert.strictEqual(buildModelLabel('Opus 5', 'high'), 'Opus 5 · high');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('omits the separator when effort is absent', () => {
+      assert.strictEqual(buildModelLabel('Sonnet 5', undefined), 'Sonnet 5');
     })
   )
     passed++;
