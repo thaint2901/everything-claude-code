@@ -1,6 +1,6 @@
 # Commands Quick Reference
 
-> 94 slash commands installed globally. Type `/` in any Claude Code session to invoke.
+> 95 slash commands installed globally. Type `/` in any Claude Code session to invoke.
 
 ---
 
@@ -14,6 +14,7 @@
 | `/feature-dev` | Guided feature development with codebase understanding and architecture focus |
 | `/code-review` | Code review — local uncommitted changes or GitHub PR (pass PR number/URL for PR mode) |
 | `/review-pr` | Comprehensive PR review using specialized agents |
+| `/review-pr-loop` | Bounded 3-round review-fix loop for an open PR — human confirms before push, never auto-merges |
 | `/build-fix` | Detect and fix build errors — delegates to the right build-resolver agent automatically |
 | `/quality-gate` | Quality gate check against project standards |
 | `/santa-loop` | Adversarial dual-review convergence loop — two independent model reviewers must both approve before code ships |
