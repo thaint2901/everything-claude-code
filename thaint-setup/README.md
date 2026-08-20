@@ -33,7 +33,7 @@ In the order `main()` runs them:
 2. **Skips onboarding** — marks `hasCompletedOnboarding=true` in `~/.claude.json`
 3. **Adds marketplace + plugin** — `claude-md-management@claude-plugins-official`
 4. **Backs up** `settings.json` and `~/.claude.json` into `~/.claude/backups/`, before anything overwrites them
-5. **Installs MCP server catalog** — all 35 ECC MCP servers with env-var placeholders. Servers without required env vars stay disabled; set the env var to auto-enable. See [MCP servers](#mcp-servers) below.
+5. **Installs MCP server catalog** — the 11 servers in this fork's `MCP_ALLOWLIST` (out of ECC's full 35-server catalog), with env-var placeholders. Servers without required env vars stay disabled; set the env var to auto-enable. See [MCP servers](#mcp-servers) below.
 6. **Installs global CLAUDE.md** — copies `thaint-setup/CLAUDE.base.md` to `~/.claude/CLAUDE.md` (applies across all projects)
 7. **Copies directories** into `~/.claude/` (from this repo's checked-out tree), listing but not deleting files the source no longer has:
    - `agents/`
@@ -99,25 +99,19 @@ TELEGRAM_BOT_TOKEN=xxx TELEGRAM_CHAT_ID=123 bash thaint-setup/setup_claude.sh
 
 ## MCP Servers
 
-All 35 ECC MCP servers are installed with `${ENV_VAR}` placeholders. A server is **disabled by default** — if any required env var is unset, Claude Code cannot parse the entry and skips it. Set the env var in `~/.claude/settings.json` `env` block or in your shell profile to enable. If the catalog ever gains a placeholder the script does not map, the install aborts instead of writing the literal string into your config.
+Only the servers listed in `MCP_ALLOWLIST` (in `setup_claude.sh`) are installed — the rest of ECC's 35-server catalog (cloud infra, extra memory servers, code-quality tools, etc.) is skipped entirely rather than installed disabled. Installed servers get `${ENV_VAR}` placeholders; a server is **disabled by default** if any required env var is unset — Claude Code can't parse the entry and skips it. Set the env var in `~/.claude/settings.json` `env` block or in your shell profile to enable. If the catalog ever gains a placeholder the script does not map, the install aborts instead of writing the literal string into your config.
 
 | Server | Required Env Var | Type |
 |---|---|---|
 | jira | `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | stdio |
-| github | `GITHUB_PERSONAL_ACCESS_TOKEN` | stdio |
+| confluence | `CONFLUENCE_BASE_URL`, `CONFLUENCE_EMAIL`, `CONFLUENCE_API_TOKEN` | stdio |
 | firecrawl | `FIRECRAWL_API_KEY` | stdio |
-| supabase | `SUPABASE_PROJECT_REF` | stdio |
 | exa-web-search | `EXA_API_KEY` | stdio |
-| fal-ai | `FAL_KEY` | stdio |
 | browserbase | `BROWSERBASE_API_KEY` | stdio |
 | browser-use | `BROWSER_USE_API_KEY` | http |
-| confluence | `CONFLUENCE_BASE_URL`, `CONFLUENCE_EMAIL`, `CONFLUENCE_API_TOKEN` | stdio |
-| evalview | `OPENAI_API_KEY` (optional) | stdio |
-| codescene | `CS_ACCESS_TOKEN` | stdio |
-| memxus | `MEMXUS_API_KEY` | http |
-| ecc-memory-vault | `ECC_MEMORY_HARNESS` | stdio |
-| filesystem | `MCP_FILESYSTEM_PATH` (default: `$HOME`) | stdio |
-| memory, context7, sequential-thinking, magic, playwright, token-optimizer, devfleet, insaits, omega-memory, vercel, railway, cloudflare-\*, clickhouse, laraplugins | None (always enabled) | varies |
+| context7, playwright, magic, parallel-search, laraplugins | None (always enabled) | varies |
+
+To add a server back, add its key to `MCP_ALLOWLIST` in `setup_claude.sh` and re-run the install.
 
 ## Requirements
 
