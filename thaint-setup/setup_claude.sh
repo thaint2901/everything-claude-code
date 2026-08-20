@@ -612,11 +612,18 @@ patch_settings_statusline() {
   log "patched settings.json (.statusLine -> ecc-statusline.js, refreshInterval 20s)"
 }
 
+# This fork only wants a subset of ECC's MCP catalog installed: docs lookup,
+# browser automation, web search/scraping, design tooling, and issue/doc
+# trackers. Everything else in mcp-servers.json (cloud infra, extra memory
+# servers, code-quality tools, etc.) is skipped rather than installed disabled.
+readonly MCP_ALLOWLIST='["context7","playwright","browser-use","browserbase","exa-web-search","parallel-search","firecrawl","magic","laraplugins","jira","confluence"]'
+
 # ── MCP catalog patch ───────────────────────────────────────────────────────
-# Reads ECC's mcp-servers.json catalog and installs all servers into
-# ~/.claude.json (user scope) with ${VAR} placeholders. Servers without
-# required env vars will fail to parse (effectively disabled); set the env
-# var to auto-enable. Always overwrites .mcpServers so config matches exactly.
+# Reads ECC's mcp-servers.json catalog, filters it down to MCP_ALLOWLIST, and
+# installs the result into ~/.claude.json (user scope) with ${VAR}
+# placeholders. Servers without required env vars will fail to parse
+# (effectively disabled); set the env var to auto-enable. Always overwrites
+# .mcpServers so config matches exactly.
 patch_mcp_catalog() {
   local config="${HOME}/.claude.json"
   local mcp_src="${SOURCE}/mcp-configs/mcp-servers.json"
@@ -673,8 +680,8 @@ patch_mcp_catalog() {
 
       ($map[0]) as $m
       | del(._comments)
-      | .mcpServers |= map_values(fix_placeholders($m))
-    ' > "$mcp_processed" \
+      | .mcpServers |= (map_values(fix_placeholders($m)) | with_entries(select(.key as $k | $allowlist | index($k))))
+    ' --argjson allowlist "$MCP_ALLOWLIST" > "$mcp_processed" \
     || die "jq failed to process MCP catalog from $mcp_src"
 
   # Any placeholder still present would be written to ~/.claude.json literally,
