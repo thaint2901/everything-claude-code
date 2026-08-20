@@ -15,12 +15,13 @@ bash thaint-setup/setup_claude.sh
 ### Fresh machine
 
 ```bash
-git clone --branch v2.1.0 git@github.com:thaint2901/everything-claude-code.git \
+git clone git@github.com:thaint2901/everything-claude-code.git \
   ~/everything-claude-code \
   && bash ~/everything-claude-code/thaint-setup/setup_claude.sh
 ```
 
-Swap the `--branch` ref for whichever tag you want to install.
+This installs `main` (the latest). To pin a specific tag or branch instead, add
+`--branch <ref>` to the `git clone` command.
 
 > **Note:** Requires an SSH key on your GitHub account.
 
