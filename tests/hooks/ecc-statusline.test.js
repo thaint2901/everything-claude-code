@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { buildContextBar, readCurrentTask, buildMetricsSegment, buildModelLabel } = require('../../scripts/hooks/ecc-statusline');
+const { buildContextBar, readCurrentTask, buildMetricsSegment, buildCacheSegment, buildModelLabel } = require('../../scripts/hooks/ecc-statusline');
 
 // Test helper
 function test(name, fn) {
@@ -259,6 +259,60 @@ function runTests() {
     test('no data at all yields an empty segment', () => {
       assert.strictEqual(buildMetricsSegment({}, null, NOW_MS), '');
       assert.strictEqual(buildMetricsSegment(undefined, undefined, NOW_MS), '');
+    })
+  )
+    passed++;
+  else failed++;
+
+  // buildCacheSegment
+  console.log('\nbuildCacheSegment()\n');
+
+  if (
+    test('renders both turn and ses when both denominators are positive', () => {
+      const data = { context_window: { current_usage: { cache_read_input_tokens: 2000, cache_creation_input_tokens: 700, input_tokens: 120 } } };
+      const bridge = { total_cache_read_tokens: 8800, total_cache_creation_tokens: 1200 };
+      const out = buildCacheSegment(data, bridge);
+      assert.strictEqual(stripAnsi(out), 'cache turn:71% ses:88%');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('renders turn only when the bridge has no cache totals', () => {
+      const data = { context_window: { current_usage: { cache_read_input_tokens: 100, cache_creation_input_tokens: 0, input_tokens: 0 } } };
+      const out = buildCacheSegment(data, null);
+      assert.strictEqual(stripAnsi(out), 'cache turn:100%');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('renders ses only when stdin has no current_usage', () => {
+      const bridge = { total_cache_read_tokens: 500, total_cache_creation_tokens: 500 };
+      const out = buildCacheSegment({}, bridge);
+      assert.strictEqual(stripAnsi(out), 'cache ses:50%');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('a zero-denominator turn (no completed turn yet) is omitted', () => {
+      const data = { context_window: { current_usage: { cache_read_input_tokens: 0, cache_creation_input_tokens: 0, input_tokens: 0 } } };
+      const bridge = { total_cache_read_tokens: 500, total_cache_creation_tokens: 500 };
+      const out = buildCacheSegment(data, bridge);
+      assert.strictEqual(stripAnsi(out), 'cache ses:50%');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('no data at all yields an empty segment', () => {
+      assert.strictEqual(buildCacheSegment({}, null), '');
+      assert.strictEqual(buildCacheSegment(undefined, undefined), '');
     })
   )
     passed++;

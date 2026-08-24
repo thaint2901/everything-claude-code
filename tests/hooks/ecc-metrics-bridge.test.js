@@ -173,7 +173,42 @@ function runTests() {
       assert.strictEqual(typeof result.totalCost, 'number');
       assert.strictEqual(typeof result.totalIn, 'number');
       assert.strictEqual(typeof result.totalOut, 'number');
+      assert.strictEqual(typeof result.totalCacheRead, 'number');
+      assert.strictEqual(typeof result.totalCacheCreation, 'number');
       assert.ok(result.totalCost >= 0, 'totalCost should be non-negative');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('readSessionCost reads cumulative cache_read_tokens/cache_write_tokens from the last row', () => {
+      const tmpHome = makeTempHome();
+      const originalHome = process.env.HOME;
+      const originalUserProfile = process.env.USERPROFILE;
+      try {
+        process.env.HOME = tmpHome;
+        process.env.USERPROFILE = tmpHome;
+        const metricsDir = path.join(tmpHome, '.claude', 'metrics');
+        fs.mkdirSync(metricsDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(metricsDir, 'costs.jsonl'),
+          [
+            JSON.stringify({ session_id: 'S1', estimated_cost_usd: 0.01, input_tokens: 100, output_tokens: 50, cache_read_tokens: 2000, cache_write_tokens: 700 }),
+            JSON.stringify({ session_id: 'S1', estimated_cost_usd: 0.03, input_tokens: 300, output_tokens: 150, cache_read_tokens: 8800, cache_write_tokens: 1200 })
+          ].join('\n') + '\n',
+          'utf8'
+        );
+        const result = readSessionCost('S1');
+        assert.strictEqual(result.totalCacheRead, 8800);
+        assert.strictEqual(result.totalCacheCreation, 1200);
+      } finally {
+        if (originalHome === undefined) delete process.env.HOME;
+        else process.env.HOME = originalHome;
+        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+        else process.env.USERPROFILE = originalUserProfile;
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+      }
     })
   )
     passed++;
@@ -287,7 +322,7 @@ function runTests() {
             JSON.stringify({ session_id: 'S1', estimated_cost_usd: 0.5, input_tokens: 500, output_tokens: 250 }),
             'NOT_JSON',
             '{"truncated":',
-            JSON.stringify({ session_id: 'S1', estimated_cost_usd: 0.7, input_tokens: 700, output_tokens: 350 }),
+            JSON.stringify({ session_id: 'S1', estimated_cost_usd: 0.7, input_tokens: 700, output_tokens: 350 })
           ].join('\n') + '\n',
           'utf8'
         );
@@ -296,8 +331,7 @@ function runTests() {
         const secondResult = readSessionCost('S1');
         assert.deepStrictEqual(secondResult, result);
         const matches = captured.match(/skipped 2 malformed line\(s\)/g) || [];
-        assert.strictEqual(matches.length, 1,
-          `expected one aggregated malformed-line breadcrumb on stderr, got: ${captured}`);
+        assert.strictEqual(matches.length, 1, `expected one aggregated malformed-line breadcrumb on stderr, got: ${captured}`);
       } finally {
         process.stderr.write = originalStderrWrite;
         if (originalHome === undefined) delete process.env.HOME;
@@ -323,11 +357,7 @@ function runTests() {
         fs.mkdirSync(metricsDir, { recursive: true });
         fs.writeFileSync(
           path.join(metricsDir, 'costs.jsonl'),
-          [
-            JSON.stringify({ session_id: 'S1', estimated_cost_usd: 0.7, input_tokens: 700, output_tokens: 350 }),
-            'NOT_JSON',
-            '{"truncated":'
-          ].join('\n') + '\n',
+          [JSON.stringify({ session_id: 'S1', estimated_cost_usd: 0.7, input_tokens: 700, output_tokens: 350 }), 'NOT_JSON', '{"truncated":'].join('\n') + '\n',
           'utf8'
         );
 
@@ -374,7 +404,7 @@ function runTests() {
         // Do NOT create the metrics dir or file — readSessionCost should
         // hit ENOENT and return zeros silently.
         const result = readSessionCost('S1');
-        assert.deepStrictEqual(result, { totalCost: 0, totalIn: 0, totalOut: 0 });
+        assert.deepStrictEqual(result, { totalCost: 0, totalIn: 0, totalOut: 0, totalCacheRead: 0, totalCacheCreation: 0 });
         assert.strictEqual(captured, '', `expected no stderr on ENOENT, got: ${captured}`);
       } finally {
         process.stderr.write = originalStderrWrite;

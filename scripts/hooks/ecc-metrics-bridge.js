@@ -156,6 +156,8 @@ function readSessionCost(sessionId) {
     let totalCost = 0;
     let totalIn = 0;
     let totalOut = 0;
+    let totalCacheRead = 0;
+    let totalCacheCreation = 0;
     let malformed = 0;
     const malformedHasher = crypto.createHash('sha256');
     for (const line of lines) {
@@ -165,6 +167,8 @@ function readSessionCost(sessionId) {
           totalCost = toNumber(row.estimated_cost_usd);
           totalIn = toNumber(row.input_tokens);
           totalOut = toNumber(row.output_tokens);
+          totalCacheRead = toNumber(row.cache_read_tokens);
+          totalCacheCreation = toNumber(row.cache_write_tokens);
         }
       } catch {
         malformed += 1;
@@ -176,14 +180,9 @@ function readSessionCost(sessionId) {
     // Suppress repeats for the same malformed-line signature across hook
     // subprocesses, so a persistent bad row should not spam stderr.
     if (malformed > 0) {
-      writeCostWarningIfChanged(
-        'malformed',
-        costsPath,
-        `${malformed}:${malformedHasher.digest('hex').slice(0, 16)}`,
-        `[ecc-metrics-bridge] skipped ${malformed} malformed line(s) in ${costsPath}\n`
-      );
+      writeCostWarningIfChanged('malformed', costsPath, `${malformed}:${malformedHasher.digest('hex').slice(0, 16)}`, `[ecc-metrics-bridge] skipped ${malformed} malformed line(s) in ${costsPath}\n`);
     }
-    return { totalCost, totalIn, totalOut };
+    return { totalCost, totalIn, totalOut, totalCacheRead, totalCacheCreation };
   } catch (err) {
     // ENOENT is the common case (no Stop event has fired yet this session)
     // and is not actually a failure — stay silent on it. Anything else
@@ -197,7 +196,7 @@ function readSessionCost(sessionId) {
         `[ecc-metrics-bridge] failing open after ${err.name || 'error'} reading ${costsPath}: ${err.message || String(err)}\n`
       );
     }
-    return { totalCost: 0, totalIn: 0, totalOut: 0 };
+    return { totalCost: 0, totalIn: 0, totalOut: 0, totalCacheRead: 0, totalCacheCreation: 0 };
   }
 }
 
@@ -211,7 +210,8 @@ function run(rawInput) {
     const toolName = String(input.tool_name || '');
     const toolInput = input.tool_input || {};
 
-    const sessionId = sanitizeSessionId(input.session_id) || sanitizeSessionId(process.env.ECC_SESSION_ID) || sanitizeSessionId(process.env.CLAUDE_CODE_SESSION_ID) || sanitizeSessionId(process.env.CLAUDE_SESSION_ID);
+    const sessionId =
+      sanitizeSessionId(input.session_id) || sanitizeSessionId(process.env.ECC_SESSION_ID) || sanitizeSessionId(process.env.CLAUDE_CODE_SESSION_ID) || sanitizeSessionId(process.env.CLAUDE_SESSION_ID);
 
     if (!sessionId) return rawInput;
 
@@ -221,6 +221,8 @@ function run(rawInput) {
       total_cost_usd: 0,
       total_input_tokens: 0,
       total_output_tokens: 0,
+      total_cache_read_tokens: 0,
+      total_cache_creation_tokens: 0,
       tool_count: 0,
       files_modified_count: 0,
       files_modified: [],
@@ -260,6 +262,8 @@ function run(rawInput) {
     bridge.total_cost_usd = Math.round(costs.totalCost * 1e6) / 1e6;
     bridge.total_input_tokens = costs.totalIn;
     bridge.total_output_tokens = costs.totalOut;
+    bridge.total_cache_read_tokens = costs.totalCacheRead;
+    bridge.total_cache_creation_tokens = costs.totalCacheCreation;
 
     writeBridgeAtomic(sessionId, bridge);
   } catch {

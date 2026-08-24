@@ -2,7 +2,7 @@
 /**
  * ECC Statusline — statusLine command
  *
- * Displays: model[ · effort] | task | 5h/7d rate limit (or $cost) | dir ██░░ N%
+ * Displays: model[ · effort] | task | 5h/7d rate limit (or $cost) | cache turn/ses % | dir ██░░ N%
  *
  * Registered in settings.json under "statusLine", not in hooks.json.
  * Reads bridge file from ecc-metrics-bridge.js and stdin from Claude Code runtime.
@@ -101,6 +101,53 @@ function buildModelLabel(model, effort) {
   return effort ? `${model} · ${effort}` : model;
 }
 
+/**
+ * Build the cache hit-rate segment: "cache turn:NN% ses:NN%".
+ *
+ * `turn` comes straight from this render's stdin payload — the latest
+ * completed API turn's own usage breakdown — so it can swing to near 0%
+ * right after something invalidates the cache (model/effort change,
+ * /compact, MCP reconnect) without that being a session-wide problem.
+ * `ses` comes from the bridge's cumulative cache_read/cache_creation
+ * totals (last refreshed by ecc-metrics-bridge.js from costs.jsonl, which
+ * cost-tracker.js writes once per completed turn) — a single bad turn only
+ * nudges it, so it reads as the session's overall caching health.
+ *
+ * Either half is omitted when its inputs are missing or its denominator
+ * is zero (e.g. no completed turn yet, or no Stop event has fired).
+ *
+ * @param {object} data - Parsed stdin payload
+ * @param {object|null} bridge - Metrics bridge contents, if any
+ * @returns {string} Colored segment, or empty string
+ */
+function buildCacheSegment(data, bridge) {
+  const usage = data?.context_window?.current_usage;
+  let turnPct = null;
+  if (usage) {
+    const read = Number(usage.cache_read_input_tokens) || 0;
+    const creation = Number(usage.cache_creation_input_tokens) || 0;
+    const fresh = Number(usage.input_tokens) || 0;
+    const denom = read + creation + fresh;
+    if (denom > 0) turnPct = Math.round((read / denom) * 100);
+  }
+
+  let sesPct = null;
+  if (bridge) {
+    const read = Number(bridge.total_cache_read_tokens) || 0;
+    const creation = Number(bridge.total_cache_creation_tokens) || 0;
+    const denom = read + creation;
+    if (denom > 0) sesPct = Math.round((read / denom) * 100);
+  }
+
+  if (turnPct === null && sesPct === null) return '';
+
+  const parts = [];
+  if (turnPct !== null) parts.push(`turn:${turnPct}%`);
+  if (sesPct !== null) parts.push(`ses:${sesPct}%`);
+
+  return `\x1b[38;5;117mcache ${parts.join(' ')}\x1b[0m`;
+}
+
 function buildMetricsSegment(data, bridge, nowMs) {
   const rateLimit = buildRateLimitSegment(data?.rate_limits, nowMs);
   if (rateLimit) return rateLimit;
@@ -155,6 +202,7 @@ function runStatusline() {
 
       // Budget and session counters
       const metricsStr = buildMetricsSegment(data, bridge);
+      const cacheStr = buildCacheSegment(data, bridge);
 
       // Context bar
       const ctx = buildContextBar(remaining);
@@ -170,6 +218,9 @@ function runStatusline() {
       if (metricsStr) {
         segments.push(metricsStr);
       }
+      if (cacheStr) {
+        segments.push(cacheStr);
+      }
       segments.push(`\x1b[38;5;244m${dirname}\x1b[0m`);
 
       process.stdout.write(segments.join(' \x1b[38;5;244m\u2502\x1b[0m ') + ctx);
@@ -182,6 +233,6 @@ function runStatusline() {
   });
 }
 
-module.exports = { buildContextBar, readCurrentTask, buildMetricsSegment, buildModelLabel, MAX_STDIN };
+module.exports = { buildContextBar, readCurrentTask, buildMetricsSegment, buildCacheSegment, buildModelLabel, MAX_STDIN };
 
 if (require.main === module) runStatusline();
