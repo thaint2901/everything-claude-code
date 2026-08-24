@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { run, hashToolCall, extractFilePaths, readSessionCost } = require('../../scripts/hooks/ecc-metrics-bridge');
+const { run, hashToolCall, extractFilePaths, readSessionCost, sumCacheTokensFromTranscript } = require('../../scripts/hooks/ecc-metrics-bridge');
 
 // Test helper
 function test(name, fn) {
@@ -173,42 +173,7 @@ function runTests() {
       assert.strictEqual(typeof result.totalCost, 'number');
       assert.strictEqual(typeof result.totalIn, 'number');
       assert.strictEqual(typeof result.totalOut, 'number');
-      assert.strictEqual(typeof result.totalCacheRead, 'number');
-      assert.strictEqual(typeof result.totalCacheCreation, 'number');
       assert.ok(result.totalCost >= 0, 'totalCost should be non-negative');
-    })
-  )
-    passed++;
-  else failed++;
-
-  if (
-    test('readSessionCost reads cumulative cache_read_tokens/cache_write_tokens from the last row', () => {
-      const tmpHome = makeTempHome();
-      const originalHome = process.env.HOME;
-      const originalUserProfile = process.env.USERPROFILE;
-      try {
-        process.env.HOME = tmpHome;
-        process.env.USERPROFILE = tmpHome;
-        const metricsDir = path.join(tmpHome, '.claude', 'metrics');
-        fs.mkdirSync(metricsDir, { recursive: true });
-        fs.writeFileSync(
-          path.join(metricsDir, 'costs.jsonl'),
-          [
-            JSON.stringify({ session_id: 'S1', estimated_cost_usd: 0.01, input_tokens: 100, output_tokens: 50, cache_read_tokens: 2000, cache_write_tokens: 700 }),
-            JSON.stringify({ session_id: 'S1', estimated_cost_usd: 0.03, input_tokens: 300, output_tokens: 150, cache_read_tokens: 8800, cache_write_tokens: 1200 })
-          ].join('\n') + '\n',
-          'utf8'
-        );
-        const result = readSessionCost('S1');
-        assert.strictEqual(result.totalCacheRead, 8800);
-        assert.strictEqual(result.totalCacheCreation, 1200);
-      } finally {
-        if (originalHome === undefined) delete process.env.HOME;
-        else process.env.HOME = originalHome;
-        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
-        else process.env.USERPROFILE = originalUserProfile;
-        fs.rmSync(tmpHome, { recursive: true, force: true });
-      }
     })
   )
     passed++;
@@ -404,7 +369,7 @@ function runTests() {
         // Do NOT create the metrics dir or file — readSessionCost should
         // hit ENOENT and return zeros silently.
         const result = readSessionCost('S1');
-        assert.deepStrictEqual(result, { totalCost: 0, totalIn: 0, totalOut: 0, totalCacheRead: 0, totalCacheCreation: 0 });
+        assert.deepStrictEqual(result, { totalCost: 0, totalIn: 0, totalOut: 0 });
         assert.strictEqual(captured, '', `expected no stderr on ENOENT, got: ${captured}`);
       } finally {
         process.stderr.write = originalStderrWrite;
@@ -453,6 +418,68 @@ function runTests() {
     passed++;
   else failed++;
 
+  // sumCacheTokensFromTranscript tests
+  console.log('\nsumCacheTokensFromTranscript:');
+
+  if (
+    test('dedupes by message.id before summing cache tokens', () => {
+      const tmpDir = makeTempHome();
+      const transcriptPath = path.join(tmpDir, 't.jsonl');
+      try {
+        fs.writeFileSync(
+          transcriptPath,
+          [
+            JSON.stringify({ type: 'assistant', message: { id: 'm1', usage: { cache_read_input_tokens: 1000, cache_creation_input_tokens: 200 } } }),
+            JSON.stringify({ type: 'assistant', message: { id: 'm1', usage: { cache_read_input_tokens: 1000, cache_creation_input_tokens: 200 } } }),
+            JSON.stringify({ type: 'assistant', message: { id: 'm2', usage: { cache_read_input_tokens: 500, cache_creation_input_tokens: 50 } } }),
+            JSON.stringify({ type: 'user', message: { id: 'm3' } })
+          ].join('\n') + '\n',
+          'utf8'
+        );
+        const result = sumCacheTokensFromTranscript(transcriptPath);
+        assert.strictEqual(result.cacheRead, 1500, 'repeated message.id lines should be deduped, not summed twice');
+        assert.strictEqual(result.cacheCreation, 250);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('missing transcript file returns zeros instead of throwing', () => {
+      const result = sumCacheTokensFromTranscript('/nonexistent/path/transcript.jsonl');
+      assert.deepStrictEqual(result, { cacheRead: 0, cacheCreation: 0 });
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('lines missing message.id fall back to a synthetic per-line key', () => {
+      const tmpDir = makeTempHome();
+      const transcriptPath = path.join(tmpDir, 't.jsonl');
+      try {
+        fs.writeFileSync(
+          transcriptPath,
+          [
+            JSON.stringify({ type: 'assistant', message: { usage: { cache_read_input_tokens: 100, cache_creation_input_tokens: 10 } } }),
+            JSON.stringify({ type: 'assistant', message: { usage: { cache_read_input_tokens: 200, cache_creation_input_tokens: 20 } } })
+          ].join('\n') + '\n',
+          'utf8'
+        );
+        const result = sumCacheTokensFromTranscript(transcriptPath);
+        assert.strictEqual(result.cacheRead, 300);
+        assert.strictEqual(result.cacheCreation, 30);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    })
+  )
+    passed++;
+  else failed++;
+
   // run tests
   console.log('\nrun:');
 
@@ -479,6 +506,41 @@ function runTests() {
       const input = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls' } });
       const result = run(input);
       assert.strictEqual(result, input);
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('run() writes cache totals from input.transcript_path onto the bridge', () => {
+      const tmpDir = makeTempHome();
+      const sessionId = 'cache-transcript-test-session';
+      const transcriptPath = path.join(tmpDir, 'transcript.jsonl');
+      const bridgePath = path.join(os.tmpdir(), `ecc-metrics-${sessionId}.json`);
+      try {
+        fs.writeFileSync(
+          transcriptPath,
+          [
+            JSON.stringify({ type: 'assistant', message: { id: 'm1', usage: { cache_read_input_tokens: 2000, cache_creation_input_tokens: 700 } } }),
+            JSON.stringify({ type: 'assistant', message: { id: 'm1', usage: { cache_read_input_tokens: 2000, cache_creation_input_tokens: 700 } } }),
+            JSON.stringify({ type: 'assistant', message: { id: 'm2', usage: { cache_read_input_tokens: 6800, cache_creation_input_tokens: 500 } } })
+          ].join('\n') + '\n',
+          'utf8'
+        );
+        const input = JSON.stringify({
+          session_id: sessionId,
+          transcript_path: transcriptPath,
+          tool_name: 'Bash',
+          tool_input: { command: 'ls' }
+        });
+        run(input);
+        const bridge = JSON.parse(fs.readFileSync(bridgePath, 'utf8'));
+        assert.strictEqual(bridge.total_cache_read_tokens, 8800, 'repeated message.id lines should be deduped, not summed twice');
+        assert.strictEqual(bridge.total_cache_creation_tokens, 1200);
+      } finally {
+        fs.rmSync(bridgePath, { force: true });
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     })
   )
     passed++;

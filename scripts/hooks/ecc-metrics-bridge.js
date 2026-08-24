@@ -156,8 +156,6 @@ function readSessionCost(sessionId) {
     let totalCost = 0;
     let totalIn = 0;
     let totalOut = 0;
-    let totalCacheRead = 0;
-    let totalCacheCreation = 0;
     let malformed = 0;
     const malformedHasher = crypto.createHash('sha256');
     for (const line of lines) {
@@ -167,8 +165,6 @@ function readSessionCost(sessionId) {
           totalCost = toNumber(row.estimated_cost_usd);
           totalIn = toNumber(row.input_tokens);
           totalOut = toNumber(row.output_tokens);
-          totalCacheRead = toNumber(row.cache_read_tokens);
-          totalCacheCreation = toNumber(row.cache_write_tokens);
         }
       } catch {
         malformed += 1;
@@ -182,7 +178,7 @@ function readSessionCost(sessionId) {
     if (malformed > 0) {
       writeCostWarningIfChanged('malformed', costsPath, `${malformed}:${malformedHasher.digest('hex').slice(0, 16)}`, `[ecc-metrics-bridge] skipped ${malformed} malformed line(s) in ${costsPath}\n`);
     }
-    return { totalCost, totalIn, totalOut, totalCacheRead, totalCacheCreation };
+    return { totalCost, totalIn, totalOut };
   } catch (err) {
     // ENOENT is the common case (no Stop event has fired yet this session)
     // and is not actually a failure — stay silent on it. Anything else
@@ -196,7 +192,60 @@ function readSessionCost(sessionId) {
         `[ecc-metrics-bridge] failing open after ${err.name || 'error'} reading ${costsPath}: ${err.message || String(err)}\n`
       );
     }
-    return { totalCost: 0, totalIn: 0, totalOut: 0, totalCacheRead: 0, totalCacheCreation: 0 };
+    return { totalCost: 0, totalIn: 0, totalOut: 0 };
+  }
+}
+
+/**
+ * Sum cache_read_input_tokens/cache_creation_input_tokens across the current
+ * session's own transcript, deduped by message.id.
+ *
+ * Deliberately independent of costs.jsonl/cost-tracker.js: this fork disables
+ * stop:cost-tracker by default (Claude.ai subscription, so $ figures are
+ * noise — see thaint-setup/disabled-hooks.txt), which left costs.jsonl empty
+ * and the cache hit-rate segment's "ses" half permanently blank. Reading the
+ * transcript directly here decouples cache accounting from cost accounting.
+ *
+ * Same dedup rationale as cost-tracker.js's sumUsageFromTranscript: Claude
+ * Code writes one JSONL line per content block, so a single API response
+ * (one message.id) spans multiple assistant lines that each repeat the same
+ * message.usage — summing every line inflates totals ~2.5-3x.
+ *
+ * @param {string} transcriptPath
+ * @returns {{cacheRead: number, cacheCreation: number}}
+ */
+function sumCacheTokensFromTranscript(transcriptPath) {
+  try {
+    const content = fs.readFileSync(transcriptPath, 'utf8');
+    const usageById = new Map();
+    let syntheticKey = 0;
+
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      if (entry.type !== 'assistant') continue;
+      const msg = entry.message;
+      if (!msg || !msg.usage) continue;
+
+      const key = typeof msg.id === 'string' && msg.id ? msg.id : `__line_${++syntheticKey}`;
+      usageById.set(key, msg.usage);
+    }
+
+    let cacheRead = 0;
+    let cacheCreation = 0;
+    for (const u of usageById.values()) {
+      cacheRead += toNumber(u.cache_read_input_tokens);
+      cacheCreation += toNumber(u.cache_creation_input_tokens);
+    }
+    return { cacheRead, cacheCreation };
+  } catch {
+    return { cacheRead: 0, cacheCreation: 0 };
   }
 }
 
@@ -262,8 +311,17 @@ function run(rawInput) {
     bridge.total_cost_usd = Math.round(costs.totalCost * 1e6) / 1e6;
     bridge.total_input_tokens = costs.totalIn;
     bridge.total_output_tokens = costs.totalOut;
-    bridge.total_cache_read_tokens = costs.totalCacheRead;
-    bridge.total_cache_creation_tokens = costs.totalCacheCreation;
+
+    // Update cache totals from this session's own transcript — see
+    // sumCacheTokensFromTranscript's docblock for why this doesn't reuse
+    // costs.jsonl. Leaves the bridge's prior cache totals untouched if
+    // transcript_path is missing or unreadable, rather than zeroing them.
+    const transcriptPath = typeof input.transcript_path === 'string' && input.transcript_path ? input.transcript_path : null;
+    if (transcriptPath) {
+      const cacheTotals = sumCacheTokensFromTranscript(transcriptPath);
+      bridge.total_cache_read_tokens = cacheTotals.cacheRead;
+      bridge.total_cache_creation_tokens = cacheTotals.cacheCreation;
+    }
 
     writeBridgeAtomic(sessionId, bridge);
   } catch {
@@ -285,4 +343,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { run, hashToolCall, extractFilePaths, readSessionCost, stableStringify };
+module.exports = { run, hashToolCall, extractFilePaths, readSessionCost, sumCacheTokensFromTranscript, stableStringify };
