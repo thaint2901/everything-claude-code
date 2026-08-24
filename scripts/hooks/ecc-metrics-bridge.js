@@ -4,7 +4,9 @@
  *
  * Maintains a running session aggregate in /tmp/ecc-metrics-{session}.json.
  * This bridge file is read by ecc-statusline.js and ecc-context-monitor.js,
- * avoiding the need to scan large JSONL logs on every invocation.
+ * mostly avoiding the need to scan large JSONL logs on every invocation —
+ * the one exception is sumCacheTokensFromTranscript, which does re-read
+ * this session's own transcript each call (see its docblock for why).
  */
 
 'use strict';

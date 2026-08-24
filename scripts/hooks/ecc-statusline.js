@@ -109,12 +109,14 @@ function buildModelLabel(model, effort) {
  * right after something invalidates the cache (model/effort change,
  * /compact, MCP reconnect) without that being a session-wide problem.
  * `ses` comes from the bridge's cumulative cache_read/cache_creation
- * totals (last refreshed by ecc-metrics-bridge.js from costs.jsonl, which
- * cost-tracker.js writes once per completed turn) — a single bad turn only
- * nudges it, so it reads as the session's overall caching health.
+ * totals (last refreshed by ecc-metrics-bridge.js, which sums them from
+ * this session's own transcript, deduped by message.id) — a single bad
+ * turn only nudges it, so it reads as the session's overall caching
+ * health.
  *
  * Either half is omitted when its inputs are missing or its denominator
- * is zero (e.g. no completed turn yet, or no Stop event has fired).
+ * is zero (e.g. no completed turn yet, or no PostToolUse hook has fired
+ * yet this session).
  *
  * @param {object} data - Parsed stdin payload
  * @param {object|null} bridge - Metrics bridge contents, if any
