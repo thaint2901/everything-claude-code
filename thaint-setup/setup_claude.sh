@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # setup-claude.sh — end-to-end Claude Code setup: CLI + plugin + ECC + Telegram hook.
-# Hardcoded modules, always overwrites, user scope only.
+# Reads thaint-setup/.env (see .env.example) into the settings.json env block
+# (allowlisted keys) and installs the clauded_plan + <plan>_clauded gateway
+# helpers.  Hardcoded modules, always overwrites, user scope only.
 # shellcheck shell=bash
 
 set -euo pipefail
@@ -18,9 +20,18 @@ readonly CLAUDE_PLUGIN="${CLAUDE_PLUGIN:-claude-md-management@claude-plugins-off
 readonly CLAUDE_MARKETPLACE_SOURCE="${CLAUDE_MARKETPLACE_SOURCE:-anthropics/${CLAUDE_PLUGIN##*@}}"
 
 # Credentials are env-only (settings.json env block, see Claude Code docs).
-# Optionally provided at install time to auto-populate settings.json.
+# Optionally provided at install time (or via thaint-setup/.env) to
+# auto-populate settings.json.
 TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
 TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
+
+# ── Env file ─────────────────────────────────────────────────────────────────
+# A single gitignored .env next to this script feeds the settings.json env
+# block.  Only the keys in ENV_APPLY_KEYS are applied; a per-plan gateway block
+# (the ANTHROPIC_* routing vars) does NOT live here — it lives in
+# ~/coding_plan/<plan>.env and is sourced only by the clauded_plan helper.
+readonly ENV_FILE="${SCRIPT_DIR}/.env"
+readonly ENV_APPLY_KEYS=(CONTEXT7_API_KEY EXA_API_KEY FIRECRAWL_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID)
 
 # ── Mutable state ────────────────────────────────────────────────────────────
 SOURCE="$REPO_ROOT"
@@ -76,8 +87,15 @@ End-to-end Claude Code setup. Installs (always overwrites) into ${CLAUDE_HOME}:
   ECC statusline (.statusLine; a hand-edited value is kept as-is),
   this fork's hook-audit env defaults (ECC_DISABLED_HOOKS,
   ECC_GATEGUARD — only set if unset)
+Allowlisted env from thaint-setup/.env (see .env.example) written to the
+  settings.json env block: CONTEXT7_API_KEY, EXA_API_KEY, FIRECRAWL_API_KEY,
+  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID. Per-plan ANTHROPIC gateway blocks
+  (routing/model vars) live in ~/coding_plan/<plan>.env and are read only
+  by the installed <plan>_clauded helpers.
 Shell rc patch (.zshrc or .bashrc):
   alias clauded='claude --dangerously-skip-permissions'
+  source ~/.claude/setup/clauded-plan.sh  (defines clauded_plan +
+    <plan>_clauded wrappers, e.g. ocgo_clauded)
   export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
 
 Installs from the ECC tree this script lives in (${REPO_ROOT}).
@@ -281,61 +299,100 @@ install_telegram_hook() {
   fi
 
   patch_settings_telegram "$settings" "$hook_js"
-  ensure_telegram_env "$settings"
 }
 
-ensure_telegram_env() {
+# Reads thaint-setup/.env into the shell so the allowlisted keys are visible
+# for patch_settings_env.  Real shell exports win over the file: `source` is
+# run inside a subshell with `set -a`, so the file can only *add* a value for a
+# key that is not already set in the environment.  Keys not in ENV_APPLY_KEYS
+# (a per-plan ANTHROPIC_* gateway block in ~/coding_plan/*.env) are never
+# loaded here — only the clauded_plan helper reads those.
+load_env() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  local bad
+  bad="$(grep -vE '^[[:space:]]*(#|$)' "$ENV_FILE" | grep -vE '^[A-Za-z_][A-Za-z0-9_]*=' || true)"
+  if [[ -n "$bad" ]]; then
+    warn ".env has non-KEY=value lines (ignored): $(printf '%s' "$bad" | tr '\n' ' ')"
+  fi
+  # Parse with `source` for zsh/bash quoting fidelity (values may contain
+  # spaces, ${...}, etc.), then explicitly export the allowlisted keys.  `set -a`
+  # inside this shell is not enough: `source` runs here, not in a subshell, and
+  # a bare KEY=value line there sets a shell variable that is never exported to
+  # the jq subprocess below — so the allowlist is re-exported explicitly.
+  #
+  # A shell value wins over the file: `source` clobbers an already-set in-place
+  # in the shell, so snapshot the allowlisted keys *before* sourcing and
+  # restore them afterwards.  (`set -a` makes the file's bare assignments
+  # visible; it does NOT skip existing keys.)
+  local key pair
+  local -a shell_vals=()
+  for key in "${ENV_APPLY_KEYS[@]}"; do
+    [[ -n "${!key:-}" ]] && shell_vals+=("${key}=${!key}")
+  done
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+  for pair in "${shell_vals[@]}"; do
+    export "$pair"
+  done
+  for key in "${ENV_APPLY_KEYS[@]}"; do
+    [[ -n "${!key:-}" ]] && export "${key}=${!key}"
+  done
+  if (( VERBOSE )); then
+    log "loaded $(grep -cE '^[A-Za-z_][A-Za-z0-9_]*=' "$ENV_FILE") vars from $ENV_FILE"
+  fi
+}
+
+# Applies whatever allowlisted keys are present in the environment (from
+# shell exports or load_env's read of thaint-setup/.env) into settings.json's
+# env block.  An unset key is left untouched — its MCP server stays disabled.
+# The gateway vars are not in ENV_APPLY_KEYS and never reach settings.json.
+ensure_apply_env() {
   local settings="$1"
-
-  if [[ -n "$TELEGRAM_BOT_TOKEN" && -n "$TELEGRAM_CHAT_ID" ]]; then
-    patch_settings_env "$settings" "$TELEGRAM_BOT_TOKEN" "$TELEGRAM_CHAT_ID"
-    log "telegram credentials written to settings.json env block"
-    return
-  fi
-
-  if [[ -f "$settings" ]]; then
-    local has_token has_chat
-    has_token="$(jq -r '.env.TELEGRAM_BOT_TOKEN // empty' "$settings")"
-    has_chat="$(jq -r '.env.TELEGRAM_CHAT_ID // empty'  "$settings")"
-    if [[ -n "$has_token" && -n "$has_chat" ]]; then
-      log "telegram credentials already present in settings.json env"
-      return
-    fi
-  fi
-
-  warn "telegram credentials NOT configured — hook will be a no-op until you set them."
-  cat >&2 <<EOF
-[$TAG] Either re-run with env vars:
-[$TAG]   TELEGRAM_BOT_TOKEN=xxx TELEGRAM_CHAT_ID=123 bash $0
-[$TAG] Or paste into ${settings}:
-[$TAG]   {
-[$TAG]     "env": {
-[$TAG]       "TELEGRAM_BOT_TOKEN": "<your-bot-token>",
-[$TAG]       "TELEGRAM_CHAT_ID":   "<your-chat-id>"
-[$TAG]     }
-[$TAG]   }
-[$TAG] Docs: https://code.claude.com/docs/en/env-vars#in-settings-files
-EOF
+  local -a pairs=()
+  local key
+  for key in "${ENV_APPLY_KEYS[@]}"; do
+    [[ -n "${!key:-}" ]] || continue
+    pairs+=("$key" "${!key}")
+  done
+  (( ${#pairs[@]} )) && patch_settings_env "$settings" "${pairs[@]}"
 }
 
 patch_settings_env() {
-  local settings="$1" token="$2" chat="$3"
+  local settings="$1"
+  shift
+  local n=$(( $# / 2 ))
 
   if (( DRY_RUN )); then
-    printf '[dry-run] patch %s (env.TELEGRAM_BOT_TOKEN, env.TELEGRAM_CHAT_ID)\n' "$settings"
+    printf '[dry-run] patch %s (env keys: %s)\n' "$settings" "$*"
     return
   fi
 
   [[ -f "$settings" ]] || printf '{}\n' > "$settings"
   local tmp
   tmp="$(mktemp)"
-  jq \
-    --arg token "$token" \
-    --arg chat  "$chat" \
-    '.env //= {} | .env.TELEGRAM_BOT_TOKEN = $token | .env.TELEGRAM_CHAT_ID = $chat' \
-    "$settings" > "$tmp" \
+  # Keys and values travel as two JSON string arrays passed via --argjson, so
+  # arbitrary value strings (spaces, "1e3", quotes) survive unchanged.  The
+  # file must precede the jq args.
+  # $@ is now an interleaved key/value list (key1 val1 key2 val2 …).  Build the
+  # two JSON arrays by consuming two positional args per iteration.
+  local keys values key val
+  keys="["
+  values="["
+  while (($# >= 2)); do
+    key="$1"; val="$2"; shift 2
+    keys+="$(printf '%s' "$key" | jq -R .),"
+    values+="$(printf '%s' "$val" | jq -R .),"
+  done
+  keys="${keys%,}]"
+  values="${values%,}]"
+  jq --argjson ks "$keys" --argjson vs "$values" '
+    reduce range(0; ($ks | length)) as $i (.; .env[$ks[$i]] = $vs[$i])
+  ' "$settings" > "$tmp" \
     || die "jq failed to patch env block in $settings"
   mv "$tmp" "$settings"
+  log "patched settings.json env (${n} keys)"
 }
 
 patch_settings_telegram() {
@@ -707,12 +764,65 @@ patch_mcp_catalog() {
   log "patched .claude.json ($count MCP servers cataloged)"
 }
 
+# ── Shell helpers ────────────────────────────────────────────────────────────
+# Installs <plan>_clauded() wrappers as a sourced file under ~/.claude/setup/.
+# A "<plan>_clauded" runs claude with the gateway block from
+# ~/coding_plan/<plan>.env — so plain `claude` never routes through a gateway
+# (it stays on the user's Anthropic subscription), and switching plans is just
+# choosing a function.  One generic dispatcher below holds the shared logic,
+# and each plan is a thin 1-line wrapper delegating to it; adding a plan means
+# dropping <plan>.env into ~/coding_plan/ plus one wrapper line, nothing else.
+# The clauded alias is managed by patch_shell_rc below.
+readonly SHELL_HELPERS_DIR="${CLAUDE_HOME}/setup"
+readonly PLAN_DIR="${HOME}/coding_plan"
+ensure_shell_helpers() {
+  local helper="${SHELL_HELPERS_DIR}/clauded-plan.sh"
+
+  if (( DRY_RUN )); then
+    printf '[dry-run] write %s\n' "$helper"
+    printf '[dry-run] (patch_shell_rc: alias clauded + source clauded-plan.sh)\n'
+    return
+  fi
+
+  run mkdir -p "$SHELL_HELPERS_DIR"
+  cat > "$helper" <<EOF
+# Managed by setup_claude.sh — re-run the installer to refresh.
+# Plain \`claude\` in a new shell does NOT route through any gateway block;
+# only the <plan>_clauded() wrappers below do.  Plan gateway blocks live in
+# ${PLAN_DIR}/<plan>.env — edit those files, not this one.
+
+# clauded_plan <plan> [claude args...]  — sources ~/coding_plan/<plan>.env
+PLAN_DIR="${PLAN_DIR}"
+clauded_plan() {
+  local plan src
+  plan="\${1:?usage: clauded_plan <plan> [claude args]}"; shift
+  src="\${PLAN_DIR}/\${plan}.env"
+  if [[ ! -f "\$src" ]]; then
+    echo "[clauded_plan] no plan '\$plan' — available: \$(cd "\$PLAN_DIR" 2>/dev/null && printf '%s ' *.env)" >&2
+    echo "[clauded_plan] falling back to plain claude" >&2
+    exec claude "\$@"
+  fi
+  ( set -a; source "\$src"; set +a; exec claude --dangerously-skip-permissions --effort max "\$@" )
+}
+
+# One thin wrapper per plan.  The function name is semantic, not derived from
+# the filename — keeping them as plain named functions keeps them greppable
+# and zsh-completable, and adding a plan is just dropping in one line.
+ocgo_clauded() { clauded_plan opencode_go "\$@"; }
+# ali_clauded() { clauded_plan alibaba "\$@"; }
+EOF
+  run chmod 700 "$helper"
+  log "wrote $helper (clauded_plan + <plan>_clauded wrappers)"
+}
+
 # ── Shell RC patch ───────────────────────────────────────────────────────────
 # Patches the user's login shell rc with convenience alias + env.
 # Priority: $SHELL (login shell) → existing file → skip.
 patch_shell_rc() {
   local alias_line="alias clauded='claude --dangerously-skip-permissions'"
   local env_line="export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1"
+  local helper="${SHELL_HELPERS_DIR}/clauded-plan.sh"
+  local helper_source="[[ -f \"${helper}\" ]] && source \"${helper}\""
 
   local shell_rc=""
   # $SHELL is the login shell, not the current process — works even when script
@@ -735,7 +845,7 @@ patch_shell_rc() {
   fi
 
   if (( DRY_RUN )); then
-    printf '[dry-run] patch %s (alias + env)\n' "$shell_rc"
+    printf '[dry-run] patch %s (alias clauded + source clauded-plan.sh + env)\n' "$shell_rc"
     return
   fi
 
@@ -743,6 +853,7 @@ patch_shell_rc() {
   local needs_append=0
   if ! grep -qF "$alias_line" "$shell_rc"; then needs_append=1; fi
   if ! grep -qF "$env_line" "$shell_rc"; then needs_append=1; fi
+  if ! grep -qF "clauded-plan.sh" "$shell_rc"; then needs_append=1; fi
   if (( needs_append )); then
     touch "$shell_rc"
   fi
@@ -759,6 +870,13 @@ patch_shell_rc() {
     log "added env to $shell_rc"
   else
     log "env already present in $shell_rc"
+  fi
+
+  if ! grep -qF "clauded-plan.sh" "$shell_rc"; then
+    printf '%s\n' "$helper_source" >> "$shell_rc"
+    log "added clauded_plan source line to $shell_rc"
+  else
+    log "clauded_plan source line already present in $shell_rc"
   fi
 }
 
@@ -819,6 +937,7 @@ main() {
 
   backup_settings
   patch_mcp_catalog
+  load_env
   install_global_claude_md
   install_all_dirs
   install_hooks_runtime
@@ -827,6 +946,8 @@ main() {
   ensure_ecc_hook_config
   patch_settings_statusline
   install_telegram_hook
+  ensure_apply_env "${CLAUDE_HOME}/settings.json"
+  ensure_shell_helpers
   patch_shell_rc
 
   log "done"
