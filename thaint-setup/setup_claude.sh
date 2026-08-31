@@ -806,7 +806,10 @@ clauded_plan() {
     exec claude "\$@"
   fi
   tmp="\$(mktemp)"
-  grep "^\${prefix}" "\$src" | sed "s/^\${prefix}//" > "\$tmp"
+  # Match both bare "KEY=value" and "export KEY=value" (the old
+  # ~/coding_plan/*.env format), then strip the optional "export " and the
+  # <PLAN>_ prefix so claude receives canonical ANTHROPIC_* names.
+  grep -E "^(\${prefix}|export \${prefix})" "\$src" | sed -e "s/^export //" -e "s/^\${prefix}//" > "\$tmp"
   ( set -a; source "\$tmp"; rm -f "\$tmp"; set +a; exec claude --dangerously-skip-permissions --effort max "\$@" )
 }
 
