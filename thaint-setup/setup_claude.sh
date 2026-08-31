@@ -316,14 +316,26 @@ load_env() {
   fi
   # Parse with `source` for zsh/bash quoting fidelity (values may contain
   # spaces, ${...}, etc.), then explicitly export the allowlisted keys.  `set -a`
-  # inside the subshell is not enough: `source` runs in the script's own shell,
-  # and a bare KEY=value line there sets a shell variable that is never
-  # exported to the jq subprocess below.
-  local key
+  # inside this shell is not enough: `source` runs here, not in a subshell, and
+  # a bare KEY=value line there sets a shell variable that is never exported to
+  # the jq subprocess below — so the allowlist is re-exported explicitly.
+  #
+  # A shell value wins over the file: `source` clobbers an already-set in-place
+  # in the shell, so snapshot the allowlisted keys *before* sourcing and
+  # restore them afterwards.  (`set -a` makes the file's bare assignments
+  # visible; it does NOT skip existing keys.)
+  local key pair
+  local -a shell_vals=()
+  for key in "${ENV_APPLY_KEYS[@]}"; do
+    [[ -n "${!key:-}" ]] && shell_vals+=("${key}=${!key}")
+  done
   set -a
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
+  for pair in "${shell_vals[@]}"; do
+    export "$pair"
+  done
   for key in "${ENV_APPLY_KEYS[@]}"; do
     [[ -n "${!key:-}" ]] && export "${key}=${!key}"
   done
