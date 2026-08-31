@@ -27,9 +27,9 @@ TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
 
 # ── Env file ─────────────────────────────────────────────────────────────────
 # A single gitignored .env next to this script feeds the settings.json env
-# block.  Only the keys in ENV_APPLY_KEYS are applied; a per-plan gateway block
-# (the ANTHROPIC_* routing vars) does NOT live here — it lives in
-# ~/coding_plan/<plan>.env and is sourced only by the clauded_plan helper.
+# block.  Only the keys in ENV_APPLY_KEYS are applied; the <PLAN>_ANTHROPIC_*
+# gateway blocks live here too (under a <PLAN>_ prefix) and are consumed only
+# by the clauded_plan helper, which strips the prefix before launching claude.
 readonly ENV_FILE="${SCRIPT_DIR}/.env"
 readonly ENV_APPLY_KEYS=(CONTEXT7_API_KEY EXA_API_KEY FIRECRAWL_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID)
 
@@ -90,8 +90,8 @@ End-to-end Claude Code setup. Installs (always overwrites) into ${CLAUDE_HOME}:
 Allowlisted env from thaint-setup/.env (see .env.example) written to the
   settings.json env block: CONTEXT7_API_KEY, EXA_API_KEY, FIRECRAWL_API_KEY,
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID. Per-plan ANTHROPIC gateway blocks
-  (routing/model vars) live in ~/coding_plan/<plan>.env and are read only
-  by the installed <plan>_clauded helpers.
+  (routing/model vars) live in the same .env under a <PLAN>_ prefix, read
+  (prefix stripped) only by the installed <plan>_clauded helpers.
 Shell rc patch (.zshrc or .bashrc):
   alias clauded='claude --dangerously-skip-permissions'
   source ~/.claude/setup/clauded-plan.sh  (defines clauded_plan +
@@ -305,8 +305,8 @@ install_telegram_hook() {
 # for patch_settings_env.  Real shell exports win over the file: `source` is
 # run inside a subshell with `set -a`, so the file can only *add* a value for a
 # key that is not already set in the environment.  Keys not in ENV_APPLY_KEYS
-# (a per-plan ANTHROPIC_* gateway block in ~/coding_plan/*.env) are never
-# loaded here — only the clauded_plan helper reads those.
+# (the <PLAN>_ANTHROPIC_* gateway blocks in this .env) are never loaded here —
+# only the clauded_plan helper reads those.
 load_env() {
   [[ -f "$ENV_FILE" ]] || return 0
   local bad
@@ -766,15 +766,16 @@ patch_mcp_catalog() {
 
 # ── Shell helpers ────────────────────────────────────────────────────────────
 # Installs <plan>_clauded() wrappers as a sourced file under ~/.claude/setup/.
-# A "<plan>_clauded" runs claude with the gateway block from
-# ~/coding_plan/<plan>.env — so plain `claude` never routes through a gateway
-# (it stays on the user's Anthropic subscription), and switching plans is just
-# choosing a function.  One generic dispatcher below holds the shared logic,
-# and each plan is a thin 1-line wrapper delegating to it; adding a plan means
-# dropping <plan>.env into ~/coding_plan/ plus one wrapper line, nothing else.
+# A "<plan>_clauded" runs claude with the gateway block from this repo's
+# thaint-setup/.env, filtering lines under the <PLAN>_ prefix and stripping
+# that prefix so claude receives normal ANTHROPIC_* names — so plain `claude`
+# never routes through a gateway (it stays on the user's Anthropic
+# subscription), and switching plans is just choosing a function.  One generic
+# dispatcher below holds the shared logic, and each plan is a thin 1-line
+# wrapper delegating to it; adding a plan means adding a <PLAN>_ prefix block
+# to .env plus one wrapper line, nothing else.
 # The clauded alias is managed by patch_shell_rc below.
 readonly SHELL_HELPERS_DIR="${CLAUDE_HOME}/setup"
-readonly PLAN_DIR="${HOME}/coding_plan"
 ensure_shell_helpers() {
   local helper="${SHELL_HELPERS_DIR}/clauded-plan.sh"
 
@@ -789,20 +790,27 @@ ensure_shell_helpers() {
 # Managed by setup_claude.sh — re-run the installer to refresh.
 # Plain \`claude\` in a new shell does NOT route through any gateway block;
 # only the <plan>_clauded() wrappers below do.  Plan gateway blocks live in
-# ${PLAN_DIR}/<plan>.env — edit those files, not this one.
+# the repo's thaint-setup/.env under a <PLAN>_ prefix (e.g. OPENCODE_GO_).
+# The prefix is stripped here before claude launches.
 
-# clauded_plan <plan> [claude args...]  — sources ~/coding_plan/<plan>.env
-PLAN_DIR="${PLAN_DIR}"
+# clauded_plan <plan> [claude args...]  — sources <PLAN>_ block from .env
+ENV_FILE="${ENV_FILE}"
 clauded_plan() {
-  local plan src
+  local plan prefix src tmp
   plan="\${1:?usage: clauded_plan <plan> [claude args]}"; shift
-  src="\${PLAN_DIR}/\${plan}.env"
-  if [[ ! -f "\$src" ]]; then
-    echo "[clauded_plan] no plan '\$plan' — available: \$(cd "\$PLAN_DIR" 2>/dev/null && printf '%s ' *.env)" >&2
+  prefix="\$(printf '%s' "\$plan" | tr '[:lower:]' '[:upper:]')_"
+  src="\$ENV_FILE"
+  if [[ ! -f "\$src" ]] || ! grep -q "^\${prefix}" "\$src"; then
+    echo "[clauded_plan] no plan '\$plan' in \$ENV_FILE — available: \$(grep -oE '^[A-Z]+_' "\$src" 2>/dev/null | tr -d '_' | sort -u | grep -vE '^(CONTEXT7|EXA|FIRECRAWL|TELEGRAM|ECC|CLAUDE|ANTHROPIC)$' | tr '\n' ' ')" >&2
     echo "[clauded_plan] falling back to plain claude" >&2
     exec claude "\$@"
   fi
-  ( set -a; source "\$src"; set +a; exec claude --dangerously-skip-permissions --effort max "\$@" )
+  tmp="\$(mktemp)"
+  # Match both bare "KEY=value" and "export KEY=value" (the old
+  # ~/coding_plan/*.env format), then strip the optional "export " and the
+  # <PLAN>_ prefix so claude receives canonical ANTHROPIC_* names.
+  grep -E "^(\${prefix}|export \${prefix})" "\$src" | sed -e "s/^export //" -e "s/^\${prefix}//" > "\$tmp"
+  ( set -a; source "\$tmp"; rm -f "\$tmp"; set +a; exec claude --dangerously-skip-permissions --effort max "\$@" )
 }
 
 # One thin wrapper per plan.  The function name is semantic, not derived from
@@ -812,7 +820,7 @@ ocgo_clauded() { clauded_plan opencode_go "\$@"; }
 # ali_clauded() { clauded_plan alibaba "\$@"; }
 EOF
   run chmod 700 "$helper"
-  log "wrote $helper (clauded_plan + <plan>_clauded wrappers)"
+  log "wrote $helper (clauded_plan + <plan>_clauded wrappers, prefix-strip)"
 }
 
 # ── Shell RC patch ───────────────────────────────────────────────────────────
