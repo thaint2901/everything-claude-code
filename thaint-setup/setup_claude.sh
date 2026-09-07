@@ -333,9 +333,11 @@ load_env() {
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
-  for pair in "${shell_vals[@]}"; do
-    export "$pair"
-  done
+  if (( ${#shell_vals[@]} )); then
+    for pair in "${shell_vals[@]}"; do
+      export "$pair"
+    done
+  fi
   for key in "${ENV_APPLY_KEYS[@]}"; do
     [[ -n "${!key:-}" ]] && export "${key}=${!key}"
   done
