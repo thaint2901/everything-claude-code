@@ -819,6 +819,7 @@ clauded_plan() {
 # the filename — keeping them as plain named functions keeps them greppable
 # and zsh-completable, and adding a plan is just dropping in one line.
 ocgo_clauded() { clauded_plan opencode_go "\$@"; }
+ds_clauded() { clauded_plan deepseek "\$@"; }
 # ali_clauded() { clauded_plan alibaba "\$@"; }
 EOF
   run chmod 700 "$helper"
