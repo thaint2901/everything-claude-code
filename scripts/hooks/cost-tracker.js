@@ -71,15 +71,41 @@ function readHarnessCost(sessionId, maxAgeSeconds) {
 // Approximate per-1M-token billing rates (USD).
 // Cache creation: 1.25x input rate. Cache read: 0.1x input rate.
 const RATE_TABLE = {
-  haiku:  { in: 0.80,  out: 4.0,  cacheWrite: 1.00,  cacheRead: 0.08 },
-  sonnet: { in: 3.00,  out: 15.0, cacheWrite: 3.75,  cacheRead: 0.30 },
-  opus:   { in: 15.00, out: 75.0, cacheWrite: 18.75, cacheRead: 1.50 }
+  haiku: { in: 0.8, out: 4.0, cacheWrite: 1.0, cacheRead: 0.08 },
+  sonnet: { in: 3.0, out: 15.0, cacheWrite: 3.75, cacheRead: 0.3 },
+  opus: { in: 15.0, out: 75.0, cacheWrite: 18.75, cacheRead: 1.5 },
+  // DeepSeek publishes real peak/off-peak rates (not the 1.25x/0.1x formula
+  // above) and no separate cache-write price. cacheWrite mirrors `in`
+  // because it never actually gets multiplied against anything: verified
+  // live, cache_creation_input_tokens is always 0 on DeepSeek's
+  // Anthropic-compat endpoint even on a turn that clearly wrote the cache.
+  // Peak: 01:00-04:00 and 06:00-10:00 UTC, Mon-Fri; off-peak the rest.
+  deepseek: {
+    offPeak: { in: 0.15, out: 0.6, cacheWrite: 0.15, cacheRead: 0.003 },
+    peak: { in: 0.3, out: 1.2, cacheWrite: 0.3, cacheRead: 0.006 }
+  }
 };
 
-function getRates(model) {
+function isDeepSeekPeakHour(date) {
+  const day = date.getUTCDay(); // 0=Sun..6=Sat
+  if (day === 0 || day === 6) return false;
+  const hour = date.getUTCHours();
+  return (hour >= 1 && hour < 4) || (hour >= 6 && hour < 10);
+}
+
+/**
+ * @param {string} model
+ * @param {string} [timestamp] - ISO timestamp of the turn being priced, used
+ *   only for DeepSeek's peak/off-peak window. Falls back to now when absent.
+ */
+function getRates(model, timestamp) {
   const m = String(model || '').toLowerCase();
   if (m.includes('haiku')) return RATE_TABLE.haiku;
-  if (m.includes('opus'))  return RATE_TABLE.opus;
+  if (m.includes('opus')) return RATE_TABLE.opus;
+  if (m.includes('deepseek')) {
+    const date = timestamp ? new Date(timestamp) : new Date();
+    return isDeepSeekPeakHour(date) ? RATE_TABLE.deepseek.peak : RATE_TABLE.deepseek.offPeak;
+  }
   return RATE_TABLE.sonnet;
 }
 
@@ -89,8 +115,9 @@ function toNumber(v) {
 }
 
 /**
- * Scan the session JSONL and sum token usage across all assistant turns.
- * Returns { inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, model }
+ * Scan the session JSONL and sum token usage — and cost — across all
+ * assistant turns. Returns
+ * { inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, model, costUsd }
  * or null on read failure.
  *
  * Claude Code writes one JSONL line per content block, so a single API
@@ -99,6 +126,13 @@ function toNumber(v) {
  * (verified: a session with 704 assistant lines had only 286 unique
  * message.ids — $867 line-summed vs $333 deduped). Usage is therefore
  * counted once per message.id, keeping the last line seen for each id.
+ *
+ * Cost is priced per turn — each message's own tokens against the rates for
+ * that message's own model and timestamp — rather than aggregate tokens
+ * times one rate at the end. A session's model, or DeepSeek's peak/off-peak
+ * window, can change mid-session; per-turn pricing keeps a full rescan
+ * (this function reruns on every Stop) deterministic, instead of drifting
+ * with whatever time the rescan happens to run at.
  */
 function sumUsageFromTranscript(transcriptPath) {
   let content;
@@ -115,7 +149,11 @@ function sumUsageFromTranscript(transcriptPath) {
   for (const line of content.split('\n')) {
     if (!line.trim()) continue;
     let entry;
-    try { entry = JSON.parse(line); } catch { continue; }
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
 
     if (entry.type !== 'assistant') continue;
     const msg = entry.message;
@@ -123,10 +161,8 @@ function sumUsageFromTranscript(transcriptPath) {
 
     // Lines without a message.id (older transcript shapes) keep the previous
     // per-line behavior via a synthetic key.
-    const key = (typeof msg.id === 'string' && msg.id)
-      ? msg.id
-      : `__line_${++syntheticKey}`;
-    usageById.set(key, msg.usage);
+    const key = typeof msg.id === 'string' && msg.id ? msg.id : `__line_${++syntheticKey}`;
+    usageById.set(key, { usage: msg.usage, timestamp: entry.timestamp, model: msg.model });
 
     if (msg.model && msg.model !== 'unknown') model = msg.model;
   }
@@ -135,15 +171,24 @@ function sumUsageFromTranscript(transcriptPath) {
   let outputTokens = 0;
   let cacheWriteTokens = 0;
   let cacheReadTokens = 0;
+  let costUsd = 0;
 
-  for (const u of usageById.values()) {
-    inputTokens      += toNumber(u.input_tokens);
-    outputTokens     += toNumber(u.output_tokens);
-    cacheWriteTokens += toNumber(u.cache_creation_input_tokens);
-    cacheReadTokens  += toNumber(u.cache_read_input_tokens);
+  for (const { usage: u, timestamp, model: msgModel } of usageById.values()) {
+    const rates = getRates(msgModel || model, timestamp);
+    const inTok = toNumber(u.input_tokens);
+    const outTok = toNumber(u.output_tokens);
+    const writeTok = toNumber(u.cache_creation_input_tokens);
+    const readTok = toNumber(u.cache_read_input_tokens);
+
+    inputTokens += inTok;
+    outputTokens += outTok;
+    cacheWriteTokens += writeTok;
+    cacheReadTokens += readTok;
+
+    costUsd += (inTok / 1e6) * rates.in + (outTok / 1e6) * rates.out + (writeTok / 1e6) * rates.cacheWrite + (readTok / 1e6) * rates.cacheRead;
   }
 
-  return { inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, model };
+  return { inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, model, costUsd };
 }
 
 // 1MB, matching the other Stop hooks. The Stop payload carries
@@ -168,9 +213,7 @@ process.stdin.on('end', () => {
   try {
     const input = raw.trim() ? JSON.parse(raw) : {};
 
-    const transcriptPath = (typeof input.transcript_path === 'string' && input.transcript_path)
-      ? input.transcript_path
-      : process.env.CLAUDE_TRANSCRIPT_PATH || null;
+    const transcriptPath = typeof input.transcript_path === 'string' && input.transcript_path ? input.transcript_path : process.env.CLAUDE_TRANSCRIPT_PATH || null;
 
     const sessionId =
       sanitizeSessionId(input.session_id) ||
@@ -184,21 +227,9 @@ process.stdin.on('end', () => {
       usageTotals = sumUsageFromTranscript(transcriptPath);
     }
 
-    const {
-      inputTokens = 0,
-      outputTokens = 0,
-      cacheWriteTokens = 0,
-      cacheReadTokens = 0,
-      model = 'unknown'
-    } = usageTotals || {};
+    const { inputTokens = 0, outputTokens = 0, cacheWriteTokens = 0, cacheReadTokens = 0, model = 'unknown', costUsd = 0 } = usageTotals || {};
 
-    const rates = getRates(model);
-    const transcriptCostUsd = Math.round((
-      (inputTokens      / 1e6) * rates.in +
-      (outputTokens     / 1e6) * rates.out +
-      (cacheWriteTokens / 1e6) * rates.cacheWrite +
-      (cacheReadTokens  / 1e6) * rates.cacheRead
-    ) * 1e6) / 1e6;
+    const transcriptCostUsd = Math.round(costUsd * 1e6) / 1e6;
 
     // Prefer the harness's authoritative `cost.total_cost_usd` when the
     // statusline has written it to the per-session cache (see contract in
@@ -206,22 +237,20 @@ process.stdin.on('end', () => {
     // (correct rates, 1h-cache 2x, >200K tier 2x) and is per-process so it
     // does not drift across `--resume`. Cache miss → transcript-sum.
     const harnessCost = readHarnessCost(sessionId, HARNESS_COST_MAX_AGE_SECONDS);
-    const estimatedCostUsd = harnessCost !== null
-      ? Math.round(harnessCost * 1e6) / 1e6
-      : transcriptCostUsd;
+    const estimatedCostUsd = harnessCost !== null ? Math.round(harnessCost * 1e6) / 1e6 : transcriptCostUsd;
 
     const metricsDir = path.join(getClaudeDir(), 'metrics');
     ensureDir(metricsDir);
 
     const row = {
-      timestamp:          new Date().toISOString(),
-      session_id:         sessionId,
-      transcript_path:    transcriptPath || '',
+      timestamp: new Date().toISOString(),
+      session_id: sessionId,
+      transcript_path: transcriptPath || '',
       model,
-      input_tokens:       inputTokens,
-      output_tokens:      outputTokens,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
       cache_write_tokens: cacheWriteTokens,
-      cache_read_tokens:  cacheReadTokens,
+      cache_read_tokens: cacheReadTokens,
       estimated_cost_usd: estimatedCostUsd
     };
 

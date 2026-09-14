@@ -31,16 +31,12 @@ function makeTempDir() {
 function withTempHome(homeDir) {
   return {
     HOME: homeDir,
-    USERPROFILE: homeDir,
+    USERPROFILE: homeDir
   };
 }
 
 function writeTranscript(filePath, entries) {
-  fs.writeFileSync(
-    filePath,
-    entries.map(entry => JSON.stringify(entry)).join('\n') + '\n',
-    'utf8'
-  );
+  fs.writeFileSync(filePath, entries.map(entry => JSON.stringify(entry)).join('\n') + '\n', 'utf8');
 }
 
 function runScript(input, envOverrides = {}) {
@@ -49,7 +45,7 @@ function runScript(input, envOverrides = {}) {
     encoding: 'utf8',
     input: inputStr,
     timeout: 10000,
-    env: { ...process.env, ...envOverrides },
+    env: { ...process.env, ...envOverrides }
   });
   return { code: result.status || 0, stdout: result.stdout || '', stderr: result.stderr || '' };
 }
@@ -61,19 +57,21 @@ function runTests() {
   let failed = 0;
 
   // 1. Passes through input on stdout
-  (test('passes through input on stdout', () => {
+  test('passes through input on stdout', () => {
     const input = {
       model: 'claude-sonnet-4-20250514',
-      usage: { input_tokens: 100, output_tokens: 50 },
+      usage: { input_tokens: 100, output_tokens: 50 }
     };
     const inputStr = JSON.stringify(input);
     const result = runScript(input, withTempHome(makeTempDir()));
     assert.strictEqual(result.code, 0, `Expected exit code 0, got ${result.code}`);
     assert.strictEqual(result.stdout, inputStr, 'Expected stdout to match original input');
-  }) ? passed++ : failed++);
+  })
+    ? passed++
+    : failed++;
 
   // 2. Creates metrics file when given transcript usage data
-  (test('creates metrics file when given transcript usage data', () => {
+  test('creates metrics file when given transcript usage data', () => {
     const tmpHome = makeTempDir();
     const transcriptPath = path.join(tmpHome, 'session.jsonl');
     writeTranscript(transcriptPath, [
@@ -86,9 +84,9 @@ function runTests() {
             input_tokens: 1000,
             output_tokens: 500,
             cache_creation_input_tokens: 200,
-            cache_read_input_tokens: 300,
-          },
-        },
+            cache_read_input_tokens: 300
+          }
+        }
       },
       { notJsonShape: true },
       {
@@ -97,15 +95,15 @@ function runTests() {
           model: 'claude-opus-4-20250514',
           usage: {
             input_tokens: 25,
-            output_tokens: 5,
-          },
-        },
-      },
+            output_tokens: 5
+          }
+        }
+      }
     ]);
 
     const input = {
       session_id: 'session-from-hook',
-      transcript_path: transcriptPath,
+      transcript_path: transcriptPath
     };
     const result = runScript(input, withTempHome(tmpHome));
     assert.strictEqual(result.code, 0, `Expected exit code 0, got ${result.code}`);
@@ -127,17 +125,19 @@ function runTests() {
     assert.ok(row.estimated_cost_usd > 0, 'Expected estimated_cost_usd to be positive');
 
     fs.rmSync(tmpHome, { recursive: true, force: true });
-  }) ? passed++ : failed++);
+  })
+    ? passed++
+    : failed++;
 
   // 2b. Dedupes usage by message.id (one API response = many JSONL lines)
-  (test('counts usage once per message.id across multi-line responses', () => {
+  test('counts usage once per message.id across multi-line responses', () => {
     const tmpHome = makeTempDir();
     const transcriptPath = path.join(tmpHome, 'session.jsonl');
     const sharedUsage = {
       input_tokens: 1000,
       output_tokens: 500,
       cache_creation_input_tokens: 200,
-      cache_read_input_tokens: 300,
+      cache_read_input_tokens: 300
     };
     writeTranscript(transcriptPath, [
       // One API response split into 3 content-block lines, all carrying the
@@ -146,13 +146,10 @@ function runTests() {
       { type: 'assistant', message: { id: 'msg_01AAA', model: 'claude-sonnet-4-20250514', usage: sharedUsage } },
       { type: 'assistant', message: { id: 'msg_01AAA', model: 'claude-sonnet-4-20250514', usage: sharedUsage } },
       // A second, distinct response.
-      { type: 'assistant', message: { id: 'msg_01BBB', model: 'claude-sonnet-4-20250514', usage: { input_tokens: 25, output_tokens: 5 } } },
+      { type: 'assistant', message: { id: 'msg_01BBB', model: 'claude-sonnet-4-20250514', usage: { input_tokens: 25, output_tokens: 5 } } }
     ]);
 
-    const result = runScript(
-      { session_id: 'dedupe-session', transcript_path: transcriptPath },
-      withTempHome(tmpHome)
-    );
+    const result = runScript({ session_id: 'dedupe-session', transcript_path: transcriptPath }, withTempHome(tmpHome));
     assert.strictEqual(result.code, 0, `Expected exit code 0, got ${result.code}`);
 
     const metricsFile = path.join(tmpHome, '.claude', 'metrics', 'costs.jsonl');
@@ -163,10 +160,12 @@ function runTests() {
     assert.strictEqual(row.cache_read_tokens, 300, 'Expected cache read counted once per message.id');
 
     fs.rmSync(tmpHome, { recursive: true, force: true });
-  }) ? passed++ : failed++);
+  })
+    ? passed++
+    : failed++;
 
   // 3. Handles empty input gracefully
-  (test('handles empty input gracefully', () => {
+  test('handles empty input gracefully', () => {
     const tmpHome = makeTempDir();
     const result = runScript('', withTempHome(tmpHome));
     assert.strictEqual(result.code, 0, `Expected exit code 0, got ${result.code}`);
@@ -174,10 +173,12 @@ function runTests() {
     assert.strictEqual(result.stdout, '', 'Expected empty stdout for empty input');
 
     fs.rmSync(tmpHome, { recursive: true, force: true });
-  }) ? passed++ : failed++);
+  })
+    ? passed++
+    : failed++;
 
   // 4. Handles invalid JSON gracefully
-  (test('handles invalid JSON gracefully', () => {
+  test('handles invalid JSON gracefully', () => {
     const tmpHome = makeTempDir();
     const invalidInput = 'not valid json {{{';
     const result = runScript(invalidInput, withTempHome(tmpHome));
@@ -186,10 +187,12 @@ function runTests() {
     assert.strictEqual(result.stdout, invalidInput, 'Expected stdout to contain original invalid input');
 
     fs.rmSync(tmpHome, { recursive: true, force: true });
-  }) ? passed++ : failed++);
+  })
+    ? passed++
+    : failed++;
 
   // 5. Handles missing usage fields gracefully
-  (test('handles missing usage fields gracefully', () => {
+  test('handles missing usage fields gracefully', () => {
     const tmpHome = makeTempDir();
     const input = { model: 'claude-sonnet-4-20250514' };
     const inputStr = JSON.stringify(input);
@@ -206,19 +209,21 @@ function runTests() {
     assert.strictEqual(row.estimated_cost_usd, 0, 'Expected estimated_cost_usd to be 0 when no tokens');
 
     fs.rmSync(tmpHome, { recursive: true, force: true });
-  }) ? passed++ : failed++);
+  })
+    ? passed++
+    : failed++;
 
   // 6. Prefers ECC_SESSION_ID for ECC2 session correlation
-  (test('prefers ECC_SESSION_ID over CLAUDE_SESSION_ID when both are present', () => {
+  test('prefers ECC_SESSION_ID over CLAUDE_SESSION_ID when both are present', () => {
     const tmpHome = makeTempDir();
     const input = {
       model: 'claude-sonnet-4-20250514',
-      usage: { input_tokens: 120, output_tokens: 30 },
+      usage: { input_tokens: 120, output_tokens: 30 }
     };
     const result = runScript(input, {
       ...withTempHome(tmpHome),
       ECC_SESSION_ID: 'ecc-session-1234',
-      CLAUDE_SESSION_ID: 'claude-session-9999',
+      CLAUDE_SESSION_ID: 'claude-session-9999'
     });
     assert.strictEqual(result.code, 0, `Expected exit code 0, got ${result.code}`);
 
@@ -227,20 +232,22 @@ function runTests() {
     assert.strictEqual(row.session_id, 'ecc-session-1234', 'Expected ECC_SESSION_ID to win');
 
     fs.rmSync(tmpHome, { recursive: true, force: true });
-  }) ? passed++ : failed++);
+  })
+    ? passed++
+    : failed++;
 
   // 7. Uses sanitized hook input session_id when environment session IDs are absent
-  (test('uses input session_id for session correlation when env vars are absent', () => {
+  test('uses input session_id for session correlation when env vars are absent', () => {
     const tmpHome = makeTempDir();
     const input = {
       session_id: 'hook-session-abc',
       model: 'claude-sonnet-4-20250514',
-      usage: { input_tokens: 120, output_tokens: 30 },
+      usage: { input_tokens: 120, output_tokens: 30 }
     };
     const result = runScript(input, {
       ...withTempHome(tmpHome),
       ECC_SESSION_ID: '',
-      CLAUDE_SESSION_ID: '',
+      CLAUDE_SESSION_ID: ''
     });
     assert.strictEqual(result.code, 0, `Expected exit code 0, got ${result.code}`);
 
@@ -249,10 +256,12 @@ function runTests() {
     assert.strictEqual(row.session_id, 'hook-session-abc', 'Expected input session_id to be recorded');
 
     fs.rmSync(tmpHome, { recursive: true, force: true });
-  }) ? passed++ : failed++);
+  })
+    ? passed++
+    : failed++;
 
   // 8. Prefers harness-cost cache value over transcript-sum when fresh
-  (test('prefers fresh harness-cost cache over transcript estimate', () => {
+  test('prefers fresh harness-cost cache over transcript estimate', () => {
     const tmpHome = makeTempDir();
     const sessionId = 'harness-fresh-' + Date.now();
     const transcriptPath = path.join(tmpHome, 'session.jsonl');
@@ -265,24 +274,17 @@ function runTests() {
             input_tokens: 10000,
             output_tokens: 5000,
             cache_creation_input_tokens: 200000,
-            cache_read_input_tokens: 1000000,
-          },
-        },
-      },
+            cache_read_input_tokens: 1000000
+          }
+        }
+      }
     ]);
     const harnessCachePath = path.join(os.tmpdir(), `harness-cost-${sessionId}.json`);
     const nowEpoch = Math.floor(Date.now() / 1000);
-    fs.writeFileSync(
-      harnessCachePath,
-      JSON.stringify({ ts: nowEpoch, cost_usd: 1.23 }),
-      'utf8'
-    );
+    fs.writeFileSync(harnessCachePath, JSON.stringify({ ts: nowEpoch, cost_usd: 1.23 }), 'utf8');
 
     try {
-      const result = runScript(
-        { session_id: sessionId, transcript_path: transcriptPath },
-        withTempHome(tmpHome)
-      );
+      const result = runScript({ session_id: sessionId, transcript_path: transcriptPath }, withTempHome(tmpHome));
       assert.strictEqual(result.code, 0, `Expected exit code 0, got ${result.code}`);
 
       const metricsFile = path.join(tmpHome, '.claude', 'metrics', 'costs.jsonl');
@@ -292,13 +294,19 @@ function runTests() {
       assert.strictEqual(row.input_tokens, 10000, 'Token totals should still come from transcript');
       assert.strictEqual(row.output_tokens, 5000, 'Token totals should still come from transcript');
     } finally {
-      try { fs.unlinkSync(harnessCachePath); } catch { /* best-effort */ }
+      try {
+        fs.unlinkSync(harnessCachePath);
+      } catch {
+        /* best-effort */
+      }
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
-  }) ? passed++ : failed++);
+  })
+    ? passed++
+    : failed++;
 
   // 9. Ignores stale harness-cost cache and falls back to transcript estimate
-  (test('ignores stale harness-cost cache (>300s) and uses transcript estimate', () => {
+  test('ignores stale harness-cost cache (>300s) and uses transcript estimate', () => {
     const tmpHome = makeTempDir();
     const sessionId = 'harness-stale-' + Date.now();
     const transcriptPath = path.join(tmpHome, 'session.jsonl');
@@ -307,23 +315,16 @@ function runTests() {
         type: 'assistant',
         message: {
           model: 'claude-sonnet-4-20250514',
-          usage: { input_tokens: 1000, output_tokens: 500 },
-        },
-      },
+          usage: { input_tokens: 1000, output_tokens: 500 }
+        }
+      }
     ]);
     const harnessCachePath = path.join(os.tmpdir(), `harness-cost-${sessionId}.json`);
     const staleEpoch = Math.floor(Date.now() / 1000) - 3600;
-    fs.writeFileSync(
-      harnessCachePath,
-      JSON.stringify({ ts: staleEpoch, cost_usd: 999.99 }),
-      'utf8'
-    );
+    fs.writeFileSync(harnessCachePath, JSON.stringify({ ts: staleEpoch, cost_usd: 999.99 }), 'utf8');
 
     try {
-      const result = runScript(
-        { session_id: sessionId, transcript_path: transcriptPath },
-        withTempHome(tmpHome)
-      );
+      const result = runScript({ session_id: sessionId, transcript_path: transcriptPath }, withTempHome(tmpHome));
       assert.strictEqual(result.code, 0, `Expected exit code 0, got ${result.code}`);
 
       const metricsFile = path.join(tmpHome, '.claude', 'metrics', 'costs.jsonl');
@@ -333,10 +334,59 @@ function runTests() {
       // Sonnet rates: 1000/1e6*3 + 500/1e6*15 ≈ $0.011 — well below the 999.99 stale value
       assert.ok(row.estimated_cost_usd < 1, 'Expected small transcript estimate, not the stale 999.99');
     } finally {
-      try { fs.unlinkSync(harnessCachePath); } catch { /* best-effort */ }
+      try {
+        fs.unlinkSync(harnessCachePath);
+      } catch {
+        /* best-effort */
+      }
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
-  }) ? passed++ : failed++);
+  })
+    ? passed++
+    : failed++;
+
+  // 10. Prices each DeepSeek turn by its own timestamp's peak/off-peak window
+  test('prices DeepSeek turns per-turn by their own timestamp, not render time', () => {
+    const tmpHome = makeTempDir();
+    const transcriptPath = path.join(tmpHome, 'session.jsonl');
+    writeTranscript(transcriptPath, [
+      {
+        // Wed 2026-01-07 02:00 UTC — inside the 01:00-04:00 peak window.
+        type: 'assistant',
+        timestamp: '2026-01-07T02:00:00.000Z',
+        message: {
+          id: 'msg_peak',
+          model: 'deepseek-flash',
+          usage: { input_tokens: 1000000, output_tokens: 0 }
+        }
+      },
+      {
+        // Wed 2026-01-07 12:00 UTC — outside both peak windows.
+        type: 'assistant',
+        timestamp: '2026-01-07T12:00:00.000Z',
+        message: {
+          id: 'msg_offpeak',
+          model: 'deepseek-flash',
+          usage: { input_tokens: 1000000, output_tokens: 0 }
+        }
+      }
+    ]);
+
+    const result = runScript({ session_id: 'deepseek-peak-session', transcript_path: transcriptPath }, withTempHome(tmpHome));
+    assert.strictEqual(result.code, 0, `Expected exit code 0, got ${result.code}`);
+
+    const metricsFile = path.join(tmpHome, '.claude', 'metrics', 'costs.jsonl');
+    const row = JSON.parse(fs.readFileSync(metricsFile, 'utf8').trim());
+    // 1M input tokens at peak ($0.30/1M) + 1M at off-peak ($0.15/1M) = $0.45.
+    // A single flat rate applied to both turns (old behavior, or a
+    // render-time-only check) would land on $0.60 (both at peak) or $0.30
+    // (both at off-peak) instead.
+    assert.strictEqual(row.estimated_cost_usd, 0.45, 'Expected each turn priced by its own timestamp');
+
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  })
+    ? passed++
+    : failed++;
 
   console.log(`\nResults: Passed: ${passed}, Failed: ${failed}`);
   process.exit(failed > 0 ? 1 : 0);
