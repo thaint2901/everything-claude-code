@@ -8,6 +8,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const { buildContextBar, readCurrentTask, buildMetricsSegment, buildCacheSegment, buildModelLabel } = require('../../scripts/hooks/ecc-statusline');
 
@@ -391,6 +392,102 @@ function runTests() {
   )
     passed++;
   else failed++;
+
+  // Whole-hook render. The api-cost segment is the one part of the output
+  // assembled in runStatusline() rather than in an exported builder, so only a
+  // real render proves it reaches the line at all.
+  console.log('\nrunStatusline() output\n');
+
+  const renderDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecc-statusline-render-'));
+  const metricsDir = path.join(renderDir, 'metrics');
+  fs.mkdirSync(metricsDir, { recursive: true });
+
+  // Stamped "now": the hook reads the real clock, so a fixed date would only
+  // pass during the week and month it named. The remaining race is a run
+  // straddling midnight into Monday, where the fixture lands in the week (or
+  // month) that just ended.
+  fs.writeFileSync(
+    path.join(metricsDir, 'costs.jsonl'),
+    `${JSON.stringify({ timestamp: new Date().toISOString(), session_id: 'api-1', model: 'deepseek-v4.1-flash', estimated_cost_usd: 0.42 })}\n`,
+    'utf8'
+  );
+
+  const render = (model, extra = {}) => {
+    const result = spawnSync('node', [path.join(__dirname, '..', '..', 'scripts', 'hooks', 'ecc-statusline.js')], {
+      encoding: 'utf8',
+      input: JSON.stringify({
+        session_id: 'render-test',
+        model,
+        workspace: { current_dir: '/tmp/example-project' },
+        context_window: { remaining_percentage: 72 },
+        ...extra
+      }),
+      timeout: 10000,
+      env: { ...process.env, ECC_AGENT_DATA_HOME: renderDir }
+    });
+    return stripAnsi(result.stdout || '');
+  };
+
+  const API_MODEL = { id: 'deepseek-v4.1-flash', display_name: 'DeepSeek V4.1 Flash' };
+  const SUBSCRIPTION_MODEL = { id: 'claude-opus-5', display_name: 'Opus 5' };
+
+  if (
+    test('renders the week/month segment on an API-model session', () => {
+      const out = render(API_MODEL);
+      assert.ok(out.includes('w:$0.42 m:$0.42'), `unexpected line: ${JSON.stringify(out)}`);
+      // and the rest of the line still arrives around it
+      assert.ok(out.includes('DeepSeek V4.1 Flash'), 'model label missing');
+      assert.ok(out.includes('example-project'), 'dir segment missing');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('classifies from model.id when the payload carries no display_name', () => {
+      // Claude Code sends both fields, but a payload with only one still has
+      // to classify — gating on display_name alone would drop the segment.
+      const out = render({ id: 'deepseek-v4.1-flash' });
+      assert.ok(out.includes('w:$0.42 m:$0.42'), `unexpected line: ${JSON.stringify(out)}`);
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('omits it on a subscription session', () => {
+      const out = render(SUBSCRIPTION_MODEL, { rate_limits: { five_hour: { used_percentage: 24 } } });
+      assert.ok(!out.includes('w:$'), `unexpected line: ${JSON.stringify(out)}`);
+      assert.ok(out.includes('Opus 5'), 'model label missing');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('omits it when the payload names no model at all', () => {
+      // An unclassifiable payload is not evidence of API spend, and the
+      // segment is unlabelled — so it stays off rather than showing a figure
+      // the reader cannot attribute.
+      const out = render(undefined);
+      assert.ok(!out.includes('w:$'), `unexpected line: ${JSON.stringify(out)}`);
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('omits the api segment when no log exists', () => {
+      fs.rmSync(metricsDir, { recursive: true, force: true });
+      const out = render(API_MODEL);
+      assert.ok(!out.includes('w:$'), `unexpected line: ${JSON.stringify(out)}`);
+      assert.ok(out.includes('DeepSeek V4.1 Flash'), 'model label missing');
+    })
+  )
+    passed++;
+  else failed++;
+
+  fs.rmSync(renderDir, { recursive: true, force: true });
 
   // Summary
   console.log(`\nResults: ${passed} passed, ${failed} failed\n`);

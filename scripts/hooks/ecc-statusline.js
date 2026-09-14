@@ -15,6 +15,7 @@ const os = require('os');
 const path = require('path');
 const { sanitizeSessionId, readBridge, writeBridgeAtomic } = require('../lib/session-bridge');
 const { buildRateLimitSegment } = require('../lib/rate-limit-format');
+const { isApiPricedModel, buildApiCostSegment, readRollup } = require('../lib/cost-rollup');
 
 const MAX_STDIN = 1024 * 1024;
 
@@ -183,15 +184,6 @@ function isClaudeModel(s) {
   return /claude|haiku|sonnet|opus|fable/.test(s);
 }
 
-/**
- * Models ecc cost-tracker.js has real rates for. Mirrors its RATE_TABLE
- * dispatch on purpose: a family added there and not here loses its dollar
- * figure, rather than showing one the hook derived from a fallback.
- */
-function isGatewayPricedModel(s) {
-  return /deepseek/.test(s);
-}
-
 function buildMetricsSegment(data, bridge, nowMs) {
   const rateLimit = buildRateLimitSegment(data?.rate_limits, nowMs);
   if (rateLimit) return rateLimit;
@@ -203,7 +195,7 @@ function buildMetricsSegment(data, bridge, nowMs) {
 
   let cost;
   if (!model || isClaudeModel(model)) cost = nativeCost ?? bridgeCost;
-  else if (isGatewayPricedModel(model)) cost = bridgeCost;
+  else if (isApiPricedModel(model)) cost = bridgeCost;
   else cost = null;
 
   return cost === null ? '' : `\x1b[38;5;117m$${cost.toFixed(2)}\x1b[0m`;
@@ -252,6 +244,15 @@ function runStatusline() {
       // Budget and session counters
       const metricsStr = buildMetricsSegment(data, bridge);
       const cacheStr = buildCacheSegment(data, bridge);
+      // Machine-wide API spend, not this session's — served from
+      // ~/.claude/metrics/cost-rollup.json, which recomputes only when the
+      // metrics log has actually changed.
+      //
+      // Shown only in a session whose own model is one the API bills. On a
+      // subscription session (Opus and the rest) there is no per-token charge
+      // for it to relate to, and the segment carries no label saying it is
+      // not this session's.
+      const apiCostStr = isApiPricedModel(modelString(data)) ? buildApiCostSegment(readRollup()) : '';
 
       // Context bar
       const ctx = buildContextBar(remaining);
@@ -266,6 +267,9 @@ function runStatusline() {
       }
       if (metricsStr) {
         segments.push(metricsStr);
+      }
+      if (apiCostStr) {
+        segments.push(apiCostStr);
       }
       if (cacheStr) {
         segments.push(cacheStr);
