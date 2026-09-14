@@ -434,7 +434,9 @@ function runTests() {
   if (
     test('renders the week/month segment on an API-model session', () => {
       const out = render(API_MODEL);
-      assert.ok(out.includes('w:$0.42 m:$0.42'), `unexpected line: ${JSON.stringify(out)}`);
+      // Labelled with the plan: the fixture row carries no `plan` field, so
+      // this is also the legacy model→plan path firing end to end.
+      assert.ok(out.includes('ocgo w:$0.42 m:$0.42'), `unexpected line: ${JSON.stringify(out)}`);
       // and the rest of the line still arrives around it
       assert.ok(out.includes('DeepSeek V4.1 Flash'), 'model label missing');
       assert.ok(out.includes('example-project'), 'dir segment missing');
