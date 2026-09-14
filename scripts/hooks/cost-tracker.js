@@ -75,11 +75,12 @@ const RATE_TABLE = {
   sonnet: { in: 3.0, out: 15.0, cacheWrite: 3.75, cacheRead: 0.3 },
   opus: { in: 15.0, out: 75.0, cacheWrite: 18.75, cacheRead: 1.5 },
   // DeepSeek publishes real peak/off-peak rates (not the 1.25x/0.1x formula
-  // above) and no separate cache-write price. cacheWrite mirrors `in`
-  // because it never actually gets multiplied against anything: verified
-  // live, cache_creation_input_tokens is always 0 on DeepSeek's
-  // Anthropic-compat endpoint even on a turn that clearly wrote the cache.
+  // above) and no separate cache-write price, so cacheWrite mirrors `in`. It
+  // is multiplied like every other rate; the product stays 0 only because
+  // cache_creation_input_tokens is always 0 on DeepSeek's Anthropic-compat
+  // endpoint, even on a turn that clearly wrote the cache (verified live).
   // Peak: 01:00-04:00 and 06:00-10:00 UTC, Mon-Fri; off-peak the rest.
+  // Source: api-docs.deepseek.com/quick_start/pricing (checked 2026-09-14).
   deepseek: {
     offPeak: { in: 0.15, out: 0.6, cacheWrite: 0.15, cacheRead: 0.003 },
     peak: { in: 0.3, out: 1.2, cacheWrite: 0.3, cacheRead: 0.006 }
@@ -106,6 +107,11 @@ function getRates(model, timestamp) {
     const date = timestamp ? new Date(timestamp) : new Date();
     return isDeepSeekPeakHour(date) ? RATE_TABLE.deepseek.peak : RATE_TABLE.deepseek.offPeak;
   }
+  // No table entry: priced as Sonnet, a deliberate approximation. Only the
+  // models this fork routes to (Anthropic names, DeepSeek) have real rates
+  // here; anything else is silently mis-stated and this hook does not flag
+  // it. e.g. qwen3.8-flash (the opencode-go opus tier) really costs about
+  // $0.15 in / $0.47 out per 1M against the $3 / $15 applied below.
   return RATE_TABLE.sonnet;
 }
 
@@ -131,8 +137,10 @@ function toNumber(v) {
  * that message's own model and timestamp — rather than aggregate tokens
  * times one rate at the end. A session's model, or DeepSeek's peak/off-peak
  * window, can change mid-session; per-turn pricing keeps a full rescan
- * (this function reruns on every Stop) deterministic, instead of drifting
- * with whatever time the rescan happens to run at.
+ * (this function reruns on every Stop) from drifting with whatever time the
+ * rescan happens to run at. The one exception is a turn whose timestamp is
+ * missing or unparseable: a missing one is priced at the current clock, and
+ * an unparseable one silently falls to off-peak.
  */
 function sumUsageFromTranscript(transcriptPath) {
   let content;
