@@ -116,7 +116,12 @@ function buildModelLabel(model, effort) {
  *
  * Either half is omitted when its inputs are missing or its denominator
  * is zero (e.g. no completed turn yet, or no PostToolUse hook has fired
- * yet this session).
+ * yet this session). `ses` additionally requires a nonzero cache-creation
+ * total: a provider that never reports cache writes (verified: DeepSeek's
+ * Anthropic-compat endpoint always returns cache_creation_input_tokens: 0
+ * even on a turn that clearly wrote the cache) would otherwise pin this at
+ * 100% the instant any read occurs, which is a denominator artifact, not a
+ * real hit rate.
  *
  * @param {object} data - Parsed stdin payload
  * @param {object|null} bridge - Metrics bridge contents, if any
@@ -137,8 +142,9 @@ function buildCacheSegment(data, bridge) {
   if (bridge) {
     const read = Number(bridge.total_cache_read_tokens) || 0;
     const creation = Number(bridge.total_cache_creation_tokens) || 0;
-    const denom = read + creation;
-    if (denom > 0) sesPct = Math.round((read / denom) * 100);
+    if (creation > 0) {
+      sesPct = Math.round((read / (read + creation)) * 100);
+    }
   }
 
   if (turnPct === null && sesPct === null) return '';

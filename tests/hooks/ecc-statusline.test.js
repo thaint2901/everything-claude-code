@@ -318,6 +318,19 @@ function runTests() {
     passed++;
   else failed++;
 
+  if (
+    test('ses is omitted when cache_creation stays 0 despite reads (DeepSeek never reports writes)', () => {
+      const data = { context_window: { current_usage: { cache_read_input_tokens: 2176, cache_creation_input_tokens: 0, input_tokens: 259 } } };
+      const bridge = { total_cache_read_tokens: 2176, total_cache_creation_tokens: 0 };
+      const out = buildCacheSegment(data, bridge);
+      // turn still renders (has fresh in its denominator); ses would
+      // otherwise compute read/(read+0) = 100%, a denominator artifact.
+      assert.strictEqual(stripAnsi(out), 'cache turn:89%');
+    })
+  )
+    passed++;
+  else failed++;
+
   // Summary
   console.log(`\nResults: ${passed} passed, ${failed} failed\n`);
   return { passed, failed };
