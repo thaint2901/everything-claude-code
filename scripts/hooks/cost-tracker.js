@@ -253,10 +253,26 @@ process.stdin.on('end', () => {
     const metricsDir = path.join(getClaudeDir(), 'metrics');
     ensureDir(metricsDir);
 
+    // Which gateway plan this session runs under — `clauded_plan` in
+    // thaint-setup/setup_claude.sh exports ECC_PLAN with the short label its
+    // wrapper passes. Without it the row cannot be attributed: this fork's two
+    // plans both report a deepseek-* model, so the model name alone does not
+    // say which one was billed (and the wrapper names, ds/ocgo, appear nowhere
+    // in the model string).
+    //
+    // Left empty rather than guessed at when unset. It is unset on a plain
+    // `claude` (the subscription) *and* on any session started before the
+    // helper learned to export it, so writing a fallback here would label
+    // those sessions' gateway spend as subscription spend. Readers treat the
+    // empty value as "no plan recorded" and fall back to the legacy
+    // model→plan table in cost-rollup.js.
+    const plan = process.env.ECC_PLAN || '';
+
     const row = {
       timestamp: new Date().toISOString(),
       session_id: sessionId,
       transcript_path: transcriptPath || '',
+      plan,
       model,
       input_tokens: inputTokens,
       output_tokens: outputTokens,

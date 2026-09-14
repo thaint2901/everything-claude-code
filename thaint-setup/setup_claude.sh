@@ -795,11 +795,16 @@ ensure_shell_helpers() {
 # the repo's thaint-setup/.env under a <PLAN>_ prefix (e.g. OPENCODE_GO_).
 # The prefix is stripped here before claude launches.
 
-# clauded_plan <plan> [claude args...]  — sources <PLAN>_ block from .env
+# clauded_plan <plan> <label> [claude args...]
+#   <plan>  names the <PLAN>_ block in .env
+#   <label> is the short name recorded as ECC_PLAN and shown in the statusline
+# Both are required: <label> is not derivable from <plan> (ocgo vs
+# opencode_go), and defaulting it would silently swallow a claude flag.
 ENV_FILE="${ENV_FILE}"
 clauded_plan() {
-  local plan prefix src tmp
-  plan="\${1:?usage: clauded_plan <plan> [claude args]}"; shift
+  local plan label prefix src tmp
+  plan="\${1:?usage: clauded_plan <plan> <label> [claude args]}"; shift
+  label="\${1:?usage: clauded_plan <plan> <label> [claude args]}"; shift
   prefix="\$(printf '%s' "\$plan" | tr '[:lower:]' '[:upper:]')_"
   src="\$ENV_FILE"
   if [[ ! -f "\$src" ]] || ! grep -q "^\${prefix}" "\$src"; then
@@ -812,15 +817,20 @@ clauded_plan() {
   # ~/coding_plan/*.env format), then strip the optional "export " and the
   # <PLAN>_ prefix so claude receives canonical ANTHROPIC_* names.
   grep -E "^(\${prefix}|export \${prefix})" "\$src" | sed -e "s/^export //" -e "s/^\${prefix}//" > "\$tmp"
-  ( set -a; source "\$tmp"; rm -f "\$tmp"; set +a; exec claude --dangerously-skip-permissions --effort max "\$@" )
+  # ECC_PLAN names the plan for anything downstream that has to attribute this
+  # session's spend.  The plan is not recoverable from the model later: both
+  # blocks below serve deepseek-* models, so model alone would merge them.
+  ( set -a; source "\$tmp"; rm -f "\$tmp"; set +a; export ECC_PLAN="\$label"; exec claude --dangerously-skip-permissions --effort max "\$@" )
 }
 
 # One thin wrapper per plan.  The function name is semantic, not derived from
 # the filename — keeping them as plain named functions keeps them greppable
-# and zsh-completable, and adding a plan is just dropping in one line.
-ocgo_clauded() { clauded_plan opencode_go "\$@"; }
-ds_clauded() { clauded_plan deepseek "\$@"; }
-# ali_clauded() { clauded_plan alibaba "\$@"; }
+# and zsh-completable, and adding a plan is just dropping in one line.  The
+# label repeats the wrapper's own short name, so the statusline shows the plan
+# by the name it is typed as.
+ocgo_clauded() { clauded_plan opencode_go ocgo "\$@"; }
+ds_clauded() { clauded_plan deepseek ds "\$@"; }
+# ali_clauded() { clauded_plan alibaba ali "\$@"; }
 EOF
   run chmod 700 "$helper"
   log "wrote $helper (clauded_plan + <plan>_clauded wrappers, prefix-strip)"

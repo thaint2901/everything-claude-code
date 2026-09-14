@@ -260,7 +260,46 @@ function runTests() {
     ? passed++
     : failed++;
 
-  // 8. Prefers harness-cost cache value over transcript-sum when fresh
+  // 8. Records the gateway plan the session was launched under
+  test('records ECC_PLAN as the row plan', () => {
+    const tmpHome = makeTempDir();
+    const input = { session_id: 'plan-session-abc' };
+    const result = runScript(input, {
+      ...withTempHome(tmpHome),
+      ECC_PLAN: 'ocgo'
+    });
+    assert.strictEqual(result.code, 0, `Expected exit code 0, got ${result.code}`);
+
+    const metricsFile = path.join(tmpHome, '.claude', 'metrics', 'costs.jsonl');
+    const row = JSON.parse(fs.readFileSync(metricsFile, 'utf8').trim());
+    assert.strictEqual(row.plan, 'ocgo', 'Expected ECC_PLAN to be recorded');
+
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  })
+    ? passed++
+    : failed++;
+
+  // 8b. No plan recorded is left as such — not guessed at as subscription,
+  // which would mislabel gateway sessions started before the helper exported it
+  test('leaves the plan empty when ECC_PLAN is unset', () => {
+    const tmpHome = makeTempDir();
+    const input = { session_id: 'plan-session-def' };
+    const result = runScript(input, {
+      ...withTempHome(tmpHome),
+      ECC_PLAN: ''
+    });
+    assert.strictEqual(result.code, 0, `Expected exit code 0, got ${result.code}`);
+
+    const metricsFile = path.join(tmpHome, '.claude', 'metrics', 'costs.jsonl');
+    const row = JSON.parse(fs.readFileSync(metricsFile, 'utf8').trim());
+    assert.strictEqual(row.plan, '', 'Expected an empty plan, not a guessed one');
+
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  })
+    ? passed++
+    : failed++;
+
+  // 9. Prefers harness-cost cache value over transcript-sum when fresh
   test('prefers fresh harness-cost cache over transcript estimate', () => {
     const tmpHome = makeTempDir();
     const sessionId = 'harness-fresh-' + Date.now();
