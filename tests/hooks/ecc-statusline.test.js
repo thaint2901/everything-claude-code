@@ -264,6 +264,67 @@ function runTests() {
     passed++;
   else failed++;
 
+  if (
+    test('a DeepSeek session shows the hook figure, never the native one', () => {
+      // Claude Code prices a gateway model at the Anthropic tier it was asked
+      // for, which on a real session ran ~70x the DeepSeek rate for the same
+      // tokens — so the native figure must not win here.
+      const data = { model: { id: 'deepseek-v4.1-flash', display_name: 'deepseek-v4.1-flash' }, cost: { total_cost_usd: 15.72 } };
+      assert.strictEqual(stripAnsi(buildMetricsSegment(data, { total_cost_usd: 0.22 }, NOW_MS)), '$0.22');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('a DeepSeek session with no hook figure shows nothing, not the native one', () => {
+      const data = { model: { id: 'deepseek-v4.1-flash' }, cost: { total_cost_usd: 15.72 } };
+      assert.strictEqual(buildMetricsSegment(data, { total_cost_usd: 0 }, NOW_MS), '');
+      assert.strictEqual(buildMetricsSegment(data, null, NOW_MS), '');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('a model with no rate entry shows no dollar figure at all', () => {
+      // qwen3.8-flash is a real opencode-go tier model with no entry in the
+      // hook's rate table, so its row would be priced at Sonnet rates — a
+      // guess, not a cost.
+      const data = { model: { id: 'qwen3.8-flash[1m]' }, cost: { total_cost_usd: 3.4 } };
+      assert.strictEqual(buildMetricsSegment(data, { total_cost_usd: 3.4 }, NOW_MS), '');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('an Anthropic model still prefers the native cost', () => {
+      const data = { model: { id: 'claude-opus-4-6', display_name: 'Opus 4.6' }, cost: { total_cost_usd: 1.5 } };
+      assert.strictEqual(stripAnsi(buildMetricsSegment(data, BRIDGE, NOW_MS)), '$1.50');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('an Anthropic model falls back to the bridge when the payload carries no cost', () => {
+      const data = { model: { display_name: 'Sonnet 5' } };
+      assert.strictEqual(stripAnsi(buildMetricsSegment(data, { total_cost_usd: 2.25 }, NOW_MS)), '$2.25');
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('a rate limit still wins over any model-specific cost', () => {
+      const data = { model: { id: 'deepseek-v4.1-flash' }, rate_limits: { five_hour: { used_percentage: 12 } } };
+      assert.strictEqual(stripAnsi(buildMetricsSegment(data, { total_cost_usd: 0.22 }, NOW_MS)), '5h 12%');
+    })
+  )
+    passed++;
+  else failed++;
+
   // buildCacheSegment
   console.log('\nbuildCacheSegment()\n');
 

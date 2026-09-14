@@ -84,6 +84,19 @@ function readCurrentTask(sessionId) {
  * first API response), taking the native stdin `cost` field first so the
  * segment works even before ecc-metrics-bridge has written a bridge file.
  *
+ * LOCAL (thaint): which dollar figure that is now depends on the model
+ * behind the session:
+ *
+ * | model | source | why |
+ * | --- | --- | --- |
+ * | Anthropic (`claude*`, Opus/Sonnet/Haiku/Fable) | native, else bridge | Claude Code applies the 1h-cache and >200K tier multipliers the transcript sum cannot |
+ * | DeepSeek | bridge only | Claude Code prices a gateway model at whichever Anthropic tier was requested — measured ~70x the real DeepSeek rate on the same tokens — so the hook's rate-table figure is the only trustworthy one |
+ * | anything else | none; the segment is omitted | no rate entry exists, so the hook's row is a Sonnet-rate guess, and a missing number beats a wrong one |
+ *
+ * A payload with no model string at all keeps the old precedence (native,
+ * then bridge): that is a payload shape we cannot attribute, not a model we
+ * failed to recognize.
+ *
  * @param {object} data - Parsed stdin payload
  * @param {object|null} bridge - Metrics bridge contents, if any
  * @param {number} [nowMs] - Injectable clock, for tests
@@ -156,16 +169,44 @@ function buildCacheSegment(data, bridge) {
   return `\x1b[38;5;117mcache ${parts.join(' ')}\x1b[0m`;
 }
 
+/**
+ * Model string from the statusline payload, lowercased. Claude Code sends
+ * both `model.id` and `model.display_name`, so joining them still classifies
+ * a payload that carries only one.
+ */
+function modelString(data) {
+  return `${data?.model?.id || ''} ${data?.model?.display_name || ''}`.trim().toLowerCase();
+}
+
+/** Anthropic models are the ones Claude Code prices itself. */
+function isClaudeModel(s) {
+  return /claude|haiku|sonnet|opus|fable/.test(s);
+}
+
+/**
+ * Models ecc cost-tracker.js has real rates for. Mirrors its RATE_TABLE
+ * dispatch on purpose: a family added there and not here loses its dollar
+ * figure, rather than showing one the hook derived from a fallback.
+ */
+function isGatewayPricedModel(s) {
+  return /deepseek/.test(s);
+}
+
 function buildMetricsSegment(data, bridge, nowMs) {
   const rateLimit = buildRateLimitSegment(data?.rate_limits, nowMs);
   if (rateLimit) return rateLimit;
 
-  const nativeCost = data?.cost?.total_cost_usd;
-  const bridgeCost = bridge?.total_cost_usd;
-  const cost = typeof nativeCost === 'number' && nativeCost > 0 ? nativeCost : bridgeCost;
-  if (typeof cost === 'number' && cost > 0) return `\x1b[38;5;117m$${cost.toFixed(2)}\x1b[0m`;
+  const usable = c => (typeof c === 'number' && c > 0 ? c : null);
+  const nativeCost = usable(data?.cost?.total_cost_usd);
+  const bridgeCost = usable(bridge?.total_cost_usd);
+  const model = modelString(data);
 
-  return '';
+  let cost;
+  if (!model || isClaudeModel(model)) cost = nativeCost ?? bridgeCost;
+  else if (isGatewayPricedModel(model)) cost = bridgeCost;
+  else cost = null;
+
+  return cost === null ? '' : `\x1b[38;5;117m$${cost.toFixed(2)}\x1b[0m`;
 }
 
 function runStatusline() {
