@@ -388,6 +388,52 @@ function runTests() {
     ? passed++
     : failed++;
 
+  // 11. Pins the peak/off-peak RULE itself: window boundaries, the weekday
+  // rule, and UTC-ness. Test 10's two-turn sum is symmetric, so it stays
+  // green under an inverted predicate, a dropped window, or a dropped
+  // weekend check; this one uses unequal peak/off-peak counts (4 vs 6) so any
+  // misclassification moves the total, and repeats the run under a non-UTC TZ
+  // to catch a local-time regression (which UTC CI could never see).
+  test('pins DeepSeek peak window boundaries, weekend rule, and UTC-ness', () => {
+    const turn = ts => ({
+      type: 'assistant',
+      timestamp: ts,
+      message: { id: ts, model: 'deepseek-flash', usage: { input_tokens: 1000000, output_tokens: 0 } }
+    });
+    const cases = [
+      '2026-01-07T01:00:00.000Z', // Wed — first window opens (inclusive)
+      '2026-01-07T03:59:59.000Z', // Wed — first window still open
+      '2026-01-07T06:00:00.000Z', // Wed — second window opens
+      '2026-01-07T09:59:59.000Z', // Wed — second window still open
+      '2026-01-07T00:59:59.000Z', // Wed — just before the first window
+      '2026-01-07T04:00:00.000Z', // Wed — the 04:00-06:00 off-peak gap
+      '2026-01-07T05:59:59.000Z', // Wed — end of that gap
+      '2026-01-07T10:00:00.000Z', // Wed — just after the second window
+      '2026-01-10T02:00:00.000Z', // Sat — peak hour, weekend => off-peak
+      '2026-01-11T07:00:00.000Z' // Sun — peak hour, weekend => off-peak
+    ];
+    // 4 peak @ $0.30 + 6 off-peak @ $0.15 = $2.10. Inverting the predicate
+    // would give 6/4 = $2.40, dropping a window $1.80, dropping the weekend
+    // check $2.40 — none of which test 10 can distinguish.
+    const EXPECTED = 2.1;
+
+    for (const tz of ['UTC', 'America/New_York']) {
+      const tmpHome = makeTempDir();
+      const transcriptPath = path.join(tmpHome, 'session.jsonl');
+      writeTranscript(transcriptPath, cases.map(turn));
+      const result = runScript({ session_id: `peak-window-${tz}`, transcript_path: transcriptPath }, { ...withTempHome(tmpHome), TZ: tz });
+      assert.strictEqual(result.code, 0, `Expected exit code 0 under TZ=${tz}, got ${result.code}`);
+
+      const metricsFile = path.join(tmpHome, '.claude', 'metrics', 'costs.jsonl');
+      const row = JSON.parse(fs.readFileSync(metricsFile, 'utf8').trim());
+      assert.strictEqual(row.estimated_cost_usd, EXPECTED, `Expected the window rule to hold under TZ=${tz}`);
+
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  })
+    ? passed++
+    : failed++;
+
   console.log(`\nResults: Passed: ${passed}, Failed: ${failed}`);
   process.exit(failed > 0 ? 1 : 0);
 }
