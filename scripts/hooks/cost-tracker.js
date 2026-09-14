@@ -174,7 +174,10 @@ function sumUsageFromTranscript(transcriptPath) {
   let costUsd = 0;
 
   for (const { usage: u, timestamp, model: msgModel } of usageById.values()) {
-    const rates = getRates(msgModel || model, timestamp);
+    // `msgModel` can be the literal 'unknown' — the value the scan above
+    // treats as "no model info" — which is truthy and would otherwise
+    // defeat this fallback.
+    const rates = getRates(msgModel && msgModel !== 'unknown' ? msgModel : model, timestamp);
     const inTok = toNumber(u.input_tokens);
     const outTok = toNumber(u.output_tokens);
     const writeTok = toNumber(u.cache_creation_input_tokens);

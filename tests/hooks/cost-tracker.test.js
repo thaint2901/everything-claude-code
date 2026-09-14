@@ -434,6 +434,40 @@ function runTests() {
     ? passed++
     : failed++;
 
+  // 12. A turn whose message.model is the literal 'unknown' must inherit the
+  // session's real model, not fall through to the Sonnet default: 'unknown'
+  // is truthy, so the `msgModel || model` idiom on its own would price it at
+  // $3/$15 inside a DeepSeek session.
+  test("prices a literal 'unknown' model at the session model's rates", () => {
+    const tmpHome = makeTempDir();
+    const transcriptPath = path.join(tmpHome, 'session.jsonl');
+    writeTranscript(transcriptPath, [
+      {
+        type: 'assistant',
+        timestamp: '2026-01-07T12:00:00.000Z', // Wed, off-peak
+        message: { id: 'msg_deepseek', model: 'deepseek-flash', usage: { input_tokens: 1000000, output_tokens: 0 } }
+      },
+      {
+        type: 'assistant',
+        timestamp: '2026-01-07T12:00:00.000Z',
+        message: { id: 'msg_unknown', model: 'unknown', usage: { input_tokens: 1000000, output_tokens: 0 } }
+      }
+    ]);
+
+    const result = runScript({ session_id: 'unknown-model-session', transcript_path: transcriptPath }, withTempHome(tmpHome));
+    assert.strictEqual(result.code, 0, `Expected exit code 0, got ${result.code}`);
+
+    const metricsFile = path.join(tmpHome, '.claude', 'metrics', 'costs.jsonl');
+    const row = JSON.parse(fs.readFileSync(metricsFile, 'utf8').trim());
+    // Both turns off-peak DeepSeek: 2 x $0.15. Pricing the 'unknown' turn as
+    // Sonnet would give 0.15 + 3.00 = $3.15.
+    assert.strictEqual(row.estimated_cost_usd, 0.3, "Expected the 'unknown' turn to inherit the session model's rates");
+
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  })
+    ? passed++
+    : failed++;
+
   console.log(`\nResults: Passed: ${passed}, Failed: ${failed}`);
   process.exit(failed > 0 ? 1 : 0);
 }
