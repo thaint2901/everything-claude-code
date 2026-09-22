@@ -37,6 +37,11 @@ const { getClaudeDir, ensureDir } = require('./utils');
 const METRICS_DIRNAME = 'metrics';
 const LOG_FILENAME = 'costs.jsonl';
 const CACHE_FILENAME = 'cost-rollup.json';
+// Bumped whenever the cached shape changes. The reuse check below also keys on
+// the source log's size and mtime, which say nothing about the shape a
+// *previous version* of this file wrote — so without this, a cache left by an
+// older build is served as current and reads as zero spend.
+const CACHE_SCHEMA = 2;
 const API_COLOR = '\x1b[38;5;117m';
 const RESET = '\x1b[0m';
 
@@ -53,6 +58,38 @@ const RESET = '\x1b[0m';
  */
 function isApiPricedModel(model) {
   return /deepseek/.test(String(model || '').toLowerCase());
+}
+
+/**
+ * Plans for rows written before cost-tracker recorded one, derived from the
+ * model name. A session's plan is not recoverable from the model alone in
+ * general — both of this fork's gateway plans report a deepseek-* model — so
+ * this table is a fixed reading of what those plans were configured with, not
+ * a rule. Ordered: `deepseek-v4.1-flash` contains `deepseek`, so opencode-go
+ * has to be matched before the bare deepseek pattern.
+ *
+ * Only gateway plans are listed. Anthropic rows need no entry: they are
+ * dropped by isApiPricedModel before a plan is ever asked for.
+ */
+const LEGACY_MODEL_PLANS = [
+  [/qwen|deepseek-v4\.1/, 'ocgo'],
+  [/deepseek/, 'ds']
+];
+
+/**
+ * The plan a row was billed to.
+ *
+ * @param {object} row
+ * @returns {string} Plan name, or 'unknown' when the row predates both the
+ *   field and any model this table recognizes
+ */
+function planOf(row) {
+  if (typeof row.plan === 'string' && row.plan) return row.plan;
+  const model = String(row.model || '').toLowerCase();
+  for (const [pattern, plan] of LEGACY_MODEL_PLANS) {
+    if (pattern.test(model)) return plan;
+  }
+  return 'unknown';
 }
 
 function metricsDir() {
@@ -114,11 +151,12 @@ function computeWindowKeys(nowMs) {
 }
 
 /**
- * Sum API-model spend for the current ISO week and calendar month.
+ * Sum API-model spend for the current ISO week and calendar month, split by
+ * the plan each session was billed to.
  *
  * @param {Array<object>} rows - Parsed costs.jsonl rows
  * @param {number} [nowMs] - Injectable clock, for tests
- * @returns {{week_key: string, month_key: string, week_usd: number, month_usd: number}}
+ * @returns {{week_key: string, month_key: string, plans: Object<string, {week_usd: number, month_usd: number}>}}
  */
 function computeRollup(rows, nowMs) {
   // Latest row per session — the log's documented contract for "this session's
@@ -134,20 +172,22 @@ function computeRollup(rows, nowMs) {
   }
 
   const { week_key: weekKey, month_key: monthKey } = computeWindowKeys(nowMs);
+  const plans = {};
 
-  let week_usd = 0;
-  let month_usd = 0;
   for (const row of latest.values()) {
     if (!isApiPricedModel(row.model)) continue;
     const cost = Number(row.estimated_cost_usd);
     if (!Number.isFinite(cost) || cost <= 0) continue;
     const at = new Date(row.timestamp);
     if (Number.isNaN(at.getTime())) continue;
-    if (isoWeekKey(at) === weekKey) week_usd += cost;
-    if (isoMonthKey(at) === monthKey) month_usd += cost;
+
+    const plan = planOf(row);
+    const bucket = plans[plan] || (plans[plan] = { week_usd: 0, month_usd: 0 });
+    if (isoWeekKey(at) === weekKey) bucket.week_usd += cost;
+    if (isoMonthKey(at) === monthKey) bucket.month_usd += cost;
   }
 
-  return { week_key: weekKey, month_key: monthKey, week_usd, month_usd };
+  return { week_key: weekKey, month_key: monthKey, plans };
 }
 
 /** Parse the log, skipping blank and torn lines. Never throws. */
@@ -200,6 +240,7 @@ function writeCache(entry) {
 
 function refreshRollup(nowMs, stat) {
   const entry = {
+    schema: CACHE_SCHEMA,
     computed_at: toDate(nowMs).toISOString(),
     // Recorded from the stat taken *before* the read. If an append lands in
     // between, the next render sees a different size and recomputes — erring
@@ -233,7 +274,7 @@ function readRollup(nowMs) {
   }
 
   const cached = readCache();
-  if (cached && cached.src_size === stat.size && cached.src_mtime_ms === stat.mtimeMs) {
+  if (cached && cached.schema === CACHE_SCHEMA && cached.src_size === stat.size && cached.src_mtime_ms === stat.mtimeMs) {
     const { week_key, month_key } = computeWindowKeys(nowMs);
     if (cached.week_key === week_key && cached.month_key === month_key) return cached;
   }
@@ -258,30 +299,36 @@ function formatUsd(n) {
 }
 
 /**
- * Statusline segment: "w:$0.33 m:$0.33".
+ * Statusline segment: "llmcc w:$0.01 m:$0.01" — the current session's own
+ * gateway plan only, not every plan with spend machine-wide.
  *
- * Unlabelled on purpose — the numbers are too short a window to spell out, and
- * the `w:`/`m:` prefixes carry it.
- *
- * Omitted when both windows are zero. This fork routes most work through the
- * subscription, so no API spend at all is the common case and the segment
- * would otherwise be permanent noise.
+ * Used to render one group per plan with spend in the window, but the
+ * number of gateway plans grows over time (four as of 2026-09-22, more
+ * expected) while a statusline glance is read at a fixed width — a group
+ * per plan turned the segment into a wall of numbers past two or three
+ * plans. Machine-wide totals across every plan still live in the raw log
+ * (`/cost-report`), just not compressed into one status-line render.
  *
  * @param {object|null} rollup - As returned by readRollup
+ * @param {string} plan - The current session's plan, from planOf()
  * @returns {string} Colored segment, or empty string
  */
-function buildApiCostSegment(rollup) {
-  if (!rollup) return '';
+function buildApiCostSegment(rollup, plan) {
+  if (!rollup || !rollup.plans || !plan) return '';
 
-  const week = Number(rollup.week_usd) || 0;
-  const month = Number(rollup.month_usd) || 0;
+  const entry = rollup.plans[plan];
+  if (!entry) return '';
+
+  const week = Number(entry.week_usd) || 0;
+  const month = Number(entry.month_usd) || 0;
   if (week <= 0 && month <= 0) return '';
 
-  return `${API_COLOR}w:${formatUsd(week)} m:${formatUsd(month)}${RESET}`;
+  return `${API_COLOR}${plan} w:${formatUsd(week)} m:${formatUsd(month)}${RESET}`;
 }
 
 module.exports = {
   isApiPricedModel,
+  planOf,
   isoWeekKey,
   isoMonthKey,
   computeRollup,

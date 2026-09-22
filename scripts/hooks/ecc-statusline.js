@@ -15,7 +15,7 @@ const os = require('os');
 const path = require('path');
 const { sanitizeSessionId, readBridge, writeBridgeAtomic } = require('../lib/session-bridge');
 const { buildRateLimitSegment } = require('../lib/rate-limit-format');
-const { isApiPricedModel, buildApiCostSegment, readRollup } = require('../lib/cost-rollup');
+const { isApiPricedModel, buildApiCostSegment, planOf, readRollup } = require('../lib/cost-rollup');
 
 const MAX_STDIN = 1024 * 1024;
 
@@ -244,15 +244,22 @@ function runStatusline() {
       // Budget and session counters
       const metricsStr = buildMetricsSegment(data, bridge);
       const cacheStr = buildCacheSegment(data, bridge);
-      // Machine-wide API spend, not this session's — served from
+      // This session's own gateway plan's week/month spend — served from
       // ~/.claude/metrics/cost-rollup.json, which recomputes only when the
-      // metrics log has actually changed.
+      // metrics log has actually changed. Scoped to one plan (not every
+      // plan with spend machine-wide) because the plan count keeps growing;
+      // see buildApiCostSegment's docblock. `ECC_PLAN` is set by the
+      // `<plan>_clauded` wrapper that launched this process and is inherited
+      // straight from the environment — no bridge/log round-trip needed to
+      // learn it. A session started before that wrapper (or without it)
+      // falls back to planOf's legacy model reading.
       //
       // Shown only in a session whose own model is one the API bills. On a
       // subscription session (Opus and the rest) there is no per-token charge
       // for it to relate to, and the segment carries no label saying it is
       // not this session's.
-      const apiCostStr = isApiPricedModel(modelString(data)) ? buildApiCostSegment(readRollup()) : '';
+      const currentModel = modelString(data);
+      const apiCostStr = isApiPricedModel(currentModel) ? buildApiCostSegment(readRollup(), planOf({ plan: process.env.ECC_PLAN, model: currentModel })) : '';
 
       // Context bar
       const ctx = buildContextBar(remaining);

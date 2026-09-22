@@ -68,6 +68,34 @@ In the order `main()` runs them:
 To install a different ECC version, `git checkout` that ref and re-run — the
 script installs the tree it lives in.
 
+## Coding plans
+
+Each plan is an `<PLAN>_` block in the gitignored `.env` plus one wrapper line
+in `setup_claude.sh`. The installer writes the wrappers to
+`~/.claude/setup/clauded-plan.sh`, sourced from your shell rc: a wrapper sources
+its own prefix block, strips the prefix so `claude` sees plain `ANTHROPIC_*`,
+sets `ECC_PLAN` for statusline/spend attribution, and launches
+`claude --dangerously-skip-permissions --effort max`. Plain `claude` routes to
+none of them.
+
+| Wrapper | `.env` block | Routes to |
+|---|---|---|
+| `ocgo_clauded` | `OPENCODE_GO_` | OpenCode Go, direct (`opencode.ai/zen/go`) — model `deepseek-v4.1-flash[1m]`, opus tier `qwen3.8-flash[1m]` |
+| `ds_clauded` | `DEEPSEEK_` | DeepSeek API, direct (`api.deepseek.com/anthropic`) |
+| `llmgo_clauded` | `LITELLM_OPENCODE_` | LiteLLM proxy → OpenCode Go — model `opencode/deepseek-v4.1-flash[1m]` |
+| `llmcc_clauded` | `LITELLM_COMMANDCODE_` | LiteLLM proxy → Command Code (GOAT) — model `commandcode/deepseek-v4.1-flash[1m]` |
+
+The two `llm*` plans share one gateway (`thaint-setup/.env` → tunnel URL
+`https://model-gateway.tensoredge.cc`, auth = the proxy's `LITELLM_MASTER_KEY`);
+pick between them by whose account the DeepSeek V4.1 Flash traffic should bill.
+Model values there are the proxy's `model_list` ids (`~/projects/litellm/config.yaml`),
+and the `[1m]` suffix is client-side only — Claude Code strips it from the wire
+request and uses it for the 1M context window.
+
+Adding another plan: append a `<PLAN>_` block to `.env` and one wrapper line
+(`<name>_clauded() { clauded_plan <plan> <label> "$@"; }`), then re-run the
+installer.
+
 ## Examples
 
 ```bash
