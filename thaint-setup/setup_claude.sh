@@ -830,6 +830,11 @@ clauded_plan() {
 # by the name it is typed as.
 ocgo_clauded() { clauded_plan opencode_go ocgo "\$@"; }
 ds_clauded() { clauded_plan deepseek ds "\$@"; }
+# LiteLLM relay (remote proxy, https://model-gateway.tensoredge.cc): one
+# gateway, two upstreams for the same ds-4.1-flash family — pick by whose
+# quota you want billed.  Model names are the proxy's model_list ids.
+llmgo_clauded() { clauded_plan litellm_opencode llmgo "\$@"; }
+llmcc_clauded() { clauded_plan litellm_commandcode llmcc "\$@"; }
 # ali_clauded() { clauded_plan alibaba ali "\$@"; }
 EOF
   run chmod 700 "$helper"
