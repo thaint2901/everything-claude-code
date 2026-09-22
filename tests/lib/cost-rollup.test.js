@@ -224,27 +224,30 @@ function runTests() {
   const plans = spec => ({ week_key: '2026-W38', month_key: '2026-09', plans: spec });
 
   check('no rollup renders nothing', () => {
-    assert.strictEqual(buildApiCostSegment(null), '');
-    assert.strictEqual(buildApiCostSegment({ week_key: 'x', month_key: 'y' }), '');
+    assert.strictEqual(buildApiCostSegment(null, 'ocgo'), '');
+    assert.strictEqual(buildApiCostSegment({ week_key: 'x', month_key: 'y' }, 'ocgo'), '');
   });
 
-  check('all plans zero renders nothing', () => {
-    assert.strictEqual(buildApiCostSegment(plans({ ocgo: { week_usd: 0, month_usd: 0 } })), '');
+  check('no plan given renders nothing', () => {
+    assert.strictEqual(buildApiCostSegment(plans({ ocgo: { week_usd: 0.42, month_usd: 1.5 } }), ''), '');
   });
 
-  check('renders one group per plan with spend', () => {
-    const seg = buildApiCostSegment(plans({ ocgo: { week_usd: 0.42, month_usd: 1.5 } }));
-    assert.strictEqual(stripAnsi(seg), 'ocgo w:$0.42 m:$1.50');
+  check('a plan absent from the rollup renders nothing', () => {
+    assert.strictEqual(buildApiCostSegment(plans({ ocgo: { week_usd: 0.42, month_usd: 1.5 } }), 'ds'), '');
   });
 
-  check('renders both plans, name first so the pairs stay attached', () => {
-    const seg = buildApiCostSegment(plans({ ocgo: { week_usd: 0.42, month_usd: 0.42 }, ds: { week_usd: 1.2, month_usd: 3 } }));
-    assert.strictEqual(stripAnsi(seg), 'ds w:$1.20 m:$3.00 ocgo w:$0.42 m:$0.42');
+  check('the requested plan zero in both windows renders nothing', () => {
+    assert.strictEqual(buildApiCostSegment(plans({ ocgo: { week_usd: 0, month_usd: 0 } }), 'ocgo'), '');
+  });
+
+  check('renders only the requested plan, ignoring others with spend', () => {
+    const seg = buildApiCostSegment(plans({ ocgo: { week_usd: 0.42, month_usd: 0.42 }, ds: { week_usd: 1.2, month_usd: 3 } }), 'ds');
+    assert.strictEqual(stripAnsi(seg), 'ds w:$1.20 m:$3.00');
     assert.ok(seg.includes('\x1b[38;5;117m'), 'expected the cost-segment colour');
   });
 
-  check('a plan with nothing in the window is left out', () => {
-    const seg = buildApiCostSegment(plans({ ds: { week_usd: 0, month_usd: 5 }, ocgo: { week_usd: 0, month_usd: 0 } }));
+  check('a zero week still renders alongside a nonzero month', () => {
+    const seg = buildApiCostSegment(plans({ ds: { week_usd: 0, month_usd: 5 }, ocgo: { week_usd: 0, month_usd: 0 } }), 'ds');
     assert.strictEqual(stripAnsi(seg), 'ds w:$0 m:$5.00');
   });
 

@@ -299,31 +299,31 @@ function formatUsd(n) {
 }
 
 /**
- * Statusline segment: "ocgo w:$0.33 m:$0.33", one group per plan with
- * spend in the window.
+ * Statusline segment: "llmcc w:$0.01 m:$0.01" — the current session's own
+ * gateway plan only, not every plan with spend machine-wide.
  *
- * The plan name leads because the figures are per plan, not machine-wide — two
- * plans in the same week render as two groups, and dropping the name would
- * leave four unlabelled numbers whose relationship is not guessable. Plans
- * with nothing in either window are left out, which is the common case: this
- * fork routes most work through the subscription.
+ * Used to render one group per plan with spend in the window, but the
+ * number of gateway plans grows over time (four as of 2026-09-22, more
+ * expected) while a statusline glance is read at a fixed width — a group
+ * per plan turned the segment into a wall of numbers past two or three
+ * plans. Machine-wide totals across every plan still live in the raw log
+ * (`/cost-report`), just not compressed into one status-line render.
  *
  * @param {object|null} rollup - As returned by readRollup
+ * @param {string} plan - The current session's plan, from planOf()
  * @returns {string} Colored segment, or empty string
  */
-function buildApiCostSegment(rollup) {
-  if (!rollup || !rollup.plans) return '';
+function buildApiCostSegment(rollup, plan) {
+  if (!rollup || !rollup.plans || !plan) return '';
 
-  const groups = [];
-  for (const plan of Object.keys(rollup.plans).sort()) {
-    const week = Number(rollup.plans[plan].week_usd) || 0;
-    const month = Number(rollup.plans[plan].month_usd) || 0;
-    if (week <= 0 && month <= 0) continue;
-    groups.push(`${plan} w:${formatUsd(week)} m:${formatUsd(month)}`);
-  }
-  if (groups.length === 0) return '';
+  const entry = rollup.plans[plan];
+  if (!entry) return '';
 
-  return `${API_COLOR}${groups.join(' ')}${RESET}`;
+  const week = Number(entry.week_usd) || 0;
+  const month = Number(entry.month_usd) || 0;
+  if (week <= 0 && month <= 0) return '';
+
+  return `${API_COLOR}${plan} w:${formatUsd(week)} m:${formatUsd(month)}${RESET}`;
 }
 
 module.exports = {

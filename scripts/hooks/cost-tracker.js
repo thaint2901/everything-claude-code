@@ -81,6 +81,15 @@ const RATE_TABLE = {
   // endpoint, even on a turn that clearly wrote the cache (verified live).
   // Peak: 01:00-04:00 and 06:00-10:00 UTC, Mon-Fri; off-peak the rest.
   // Source: api-docs.deepseek.com/quick_start/pricing (checked 2026-09-14).
+  //
+  // This same table also prices `llmgo_clauded` and `llmcc_clauded` (both
+  // resell the identical `deepseek-v4.1-flash` via a litellm relay — see
+  // thaint-setup/.env). Confirmed 2026-09-22 against each upstream's own
+  // pricing page rather than assumed: OpenCode Zen's "Peak" row reads
+  // $0.30 / $1.20 / $0.006 (in/out/cache-read, cache-write "-"), an exact
+  // match to `peak` below; Command Code's row reads $0.15 / $0.60 / $0.003,
+  // an exact match to `offPeak`. Both resellers pass DeepSeek's rate through
+  // unmarked-up, at least on the tier each page showed.
   deepseek: {
     offPeak: { in: 0.15, out: 0.6, cacheWrite: 0.15, cacheRead: 0.003 },
     peak: { in: 0.3, out: 1.2, cacheWrite: 0.3, cacheRead: 0.006 }

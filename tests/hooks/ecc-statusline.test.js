@@ -423,7 +423,12 @@ function runTests() {
         ...extra
       }),
       timeout: 10000,
-      env: { ...process.env, ECC_AGENT_DATA_HOME: renderDir }
+      // ECC_PLAN cleared: the renderer now reads it straight from the
+      // environment to pick which plan's figures to show, and these fixtures
+      // are built around the legacy model->plan fallback firing instead —
+      // a real ECC_PLAN in the dev shell running this suite would otherwise
+      // leak in and pick a different (absent) plan, rendering nothing.
+      env: { ...process.env, ECC_AGENT_DATA_HOME: renderDir, ECC_PLAN: '' }
     });
     return stripAnsi(result.stdout || '');
   };
