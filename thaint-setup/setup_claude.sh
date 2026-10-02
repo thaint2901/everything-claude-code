@@ -958,6 +958,20 @@ install_global_rules() {
   (( DRY_RUN )) || log "installed global rules at $dest"
 }
 
+# ── Global skills ───────────────────────────────────────────────────────────
+# Copies thaint-setup/skills/ into ~/.claude/skills/ (skills for every project).
+# Same add-only reasoning as install_global_rules: ~/.claude/skills also holds
+# your own skills (learned/, synced/), so no report_foreign/--prune.
+install_global_skills() {
+  local src="${SCRIPT_DIR}/skills" dest="${CLAUDE_HOME}/skills"
+
+  [[ -d "$src" ]] || { warn "skills not found at $src — skipped"; return; }
+
+  run mkdir -p "$dest"
+  run cp -rf "$src/." "$dest/"
+  (( DRY_RUN )) || log "installed global skills at $dest"
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 main() {
   parse_args "$@"
@@ -980,6 +994,7 @@ main() {
   load_env
   install_global_claude_md
   install_global_rules
+  install_global_skills
   install_all_dirs
   install_hooks_runtime
   # Both need install_hooks_runtime to have copied the scripts they point at.
