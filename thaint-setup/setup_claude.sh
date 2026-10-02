@@ -944,6 +944,20 @@ install_global_claude_md() {
   log "installed global CLAUDE.md at $dest"
 }
 
+# ── Global rules ────────────────────────────────────────────────────────────
+# Copies thaint-setup/rules/ into ~/.claude/rules/ (rules for every project).
+# ~/.claude/rules is a shared namespace — your own rules live there too — so this
+# only adds files; it deliberately skips copy_dir's report_foreign/--prune.
+install_global_rules() {
+  local src="${SCRIPT_DIR}/rules" dest="${CLAUDE_HOME}/rules"
+
+  [[ -d "$src" ]] || { warn "rules not found at $src — skipped"; return; }
+
+  run mkdir -p "$dest"
+  run cp -rf "$src/." "$dest/"
+  (( DRY_RUN )) || log "installed global rules at $dest"
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 main() {
   parse_args "$@"
@@ -965,6 +979,7 @@ main() {
   patch_mcp_catalog
   load_env
   install_global_claude_md
+  install_global_rules
   install_all_dirs
   install_hooks_runtime
   # Both need install_hooks_runtime to have copied the scripts they point at.
