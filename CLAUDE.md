@@ -95,6 +95,12 @@ upstream-tracked files are the conflict surface. Mark permanent preferences
 `// LOCAL (thaint):`; leave bug fixes unmarked so they can be dropped once
 upstream fixes them.
 
+Fork changes land on the `preview` branch, never straight on `main`. `preview`
+is long-lived and keeps an open PR into `main`: commits accumulate there and
+the PR is merged — as a merge commit, see below — once the batch is big enough
+to be worth reviewing as a whole. `main` therefore moves only through that PR,
+so a `main` that looks behind is the normal state, not lost work.
+
 Merge PRs here with a merge commit, never a squash: one commit per fix is what
 makes `git revert <sha>` viable when upstream lands its own.
 

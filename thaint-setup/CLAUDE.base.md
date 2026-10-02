@@ -88,6 +88,16 @@ Two payoffs, not one: bulk tool output stays out of the main context, and writin
 
 A fork (inherits the conversation, shares its prompt cache) fits a task that needs that context; a fresh subagent (isolated context, its own tools/model) fits one that doesn't, or several independent attempts run in parallel.
 
+## 8. Explaining for Review
+
+**Pick the format that is easiest for the reader to verify, not the easiest to write.**
+
+When asked to explain, summarize, or help me understand something:
+- Default to short prose: one idea per sentence, active voice, one term per concept, no filler. In English aim for ~80% of ASD-STE100; in Vietnamese keep the same spirit.
+- Use a diagram when the point is flow, structure, or relationships.
+- Use an HTML artifact when I need to explore, compare, or interact with many dimensions.
+- Escalate only when text would be slower to check. Don't build a page for a two-line answer.
+
 ---
 
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, strict adherence to `uv` and `~/.venv`, clarifying questions come before implementation rather than after mistakes, and long sessions delegate work instead of accumulating it inline.
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, strict adherence to `uv` and `~/.venv`, clarifying questions come before implementation rather than after mistakes, long sessions delegate work instead of accumulating it inline, and explanations are short enough to verify at a glance, with a diagram or page only when text would be slower to check.

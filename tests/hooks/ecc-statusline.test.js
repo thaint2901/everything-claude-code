@@ -423,7 +423,12 @@ function runTests() {
         ...extra
       }),
       timeout: 10000,
-      env: { ...process.env, ECC_AGENT_DATA_HOME: renderDir }
+      // ECC_PLAN cleared: the renderer now reads it straight from the
+      // environment to pick which plan's figures to show, and these fixtures
+      // are built around the legacy model->plan fallback firing instead —
+      // a real ECC_PLAN in the dev shell running this suite would otherwise
+      // leak in and pick a different (absent) plan, rendering nothing.
+      env: { ...process.env, ECC_AGENT_DATA_HOME: renderDir, ECC_PLAN: '' }
     });
     return stripAnsi(result.stdout || '');
   };
@@ -434,7 +439,9 @@ function runTests() {
   if (
     test('renders the week/month segment on an API-model session', () => {
       const out = render(API_MODEL);
-      assert.ok(out.includes('w:$0.42 m:$0.42'), `unexpected line: ${JSON.stringify(out)}`);
+      // Labelled with the plan: the fixture row carries no `plan` field, so
+      // this is also the legacy model→plan path firing end to end.
+      assert.ok(out.includes('ocgo w:$0.42 m:$0.42'), `unexpected line: ${JSON.stringify(out)}`);
       // and the rest of the line still arrives around it
       assert.ok(out.includes('DeepSeek V4.1 Flash'), 'model label missing');
       assert.ok(out.includes('example-project'), 'dir segment missing');

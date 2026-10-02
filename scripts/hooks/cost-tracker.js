@@ -81,6 +81,15 @@ const RATE_TABLE = {
   // endpoint, even on a turn that clearly wrote the cache (verified live).
   // Peak: 01:00-04:00 and 06:00-10:00 UTC, Mon-Fri; off-peak the rest.
   // Source: api-docs.deepseek.com/quick_start/pricing (checked 2026-09-14).
+  //
+  // This same table also prices `llmgo_clauded` and `llmcc_clauded` (both
+  // resell the identical `deepseek-v4.1-flash` via a litellm relay — see
+  // thaint-setup/.env). Confirmed 2026-09-22 against each upstream's own
+  // pricing page rather than assumed: OpenCode Zen's "Peak" row reads
+  // $0.30 / $1.20 / $0.006 (in/out/cache-read, cache-write "-"), an exact
+  // match to `peak` below; Command Code's row reads $0.15 / $0.60 / $0.003,
+  // an exact match to `offPeak`. Both resellers pass DeepSeek's rate through
+  // unmarked-up, at least on the tier each page showed.
   deepseek: {
     offPeak: { in: 0.15, out: 0.6, cacheWrite: 0.15, cacheRead: 0.003 },
     peak: { in: 0.3, out: 1.2, cacheWrite: 0.3, cacheRead: 0.006 }
@@ -253,10 +262,26 @@ process.stdin.on('end', () => {
     const metricsDir = path.join(getClaudeDir(), 'metrics');
     ensureDir(metricsDir);
 
+    // Which gateway plan this session runs under — `clauded_plan` in
+    // thaint-setup/setup_claude.sh exports ECC_PLAN with the short label its
+    // wrapper passes. Without it the row cannot be attributed: this fork's two
+    // plans both report a deepseek-* model, so the model name alone does not
+    // say which one was billed (and the wrapper names, ds/ocgo, appear nowhere
+    // in the model string).
+    //
+    // Left empty rather than guessed at when unset. It is unset on a plain
+    // `claude` (the subscription) *and* on any session started before the
+    // helper learned to export it, so writing a fallback here would label
+    // those sessions' gateway spend as subscription spend. Readers treat the
+    // empty value as "no plan recorded" and fall back to the legacy
+    // model→plan table in cost-rollup.js.
+    const plan = process.env.ECC_PLAN || '';
+
     const row = {
       timestamp: new Date().toISOString(),
       session_id: sessionId,
       transcript_path: transcriptPath || '',
+      plan,
       model,
       input_tokens: inputTokens,
       output_tokens: outputTokens,
