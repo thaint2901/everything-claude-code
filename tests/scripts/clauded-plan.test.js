@@ -40,6 +40,9 @@ const WRAPPERS = {
 // Gateway path launches claude with these before the caller's own args.
 const GATEWAY_FLAGS = ['--dangerously-skip-permissions', '--effort', 'max'];
 
+// Every scratch dir setup() makes; main() removes them so repeated runs leave no litter.
+const scratchDirs = [];
+
 function test(name, fn) {
   try {
     fn();
@@ -61,6 +64,7 @@ function test(name, fn) {
  */
 function setup({ call = null, withEnvFile = true } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clauded-plan-'));
+  scratchDirs.push(dir);
   const home = path.join(dir, 'home');
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(home, { recursive: true });
@@ -108,7 +112,12 @@ ensure_shell_helpers
   );
 
   const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
-  delete env.ECC_PLAN;
+  // Run from a clauded_* session, process.env already holds a real ECC_PLAN and gateway
+  // credentials. They would reach the fake claude, fail the fallback assertions, and the
+  // assertion diff would print the live token.
+  for (const key of Object.keys(env)) {
+    if (key === 'ECC_PLAN' || key.startsWith('ANTHROPIC_')) delete env[key];
+  }
 
   const gen = spawnSync('bash', [harness], { encoding: 'utf8', timeout: 15000, env });
   const helper = path.join(home, 'setup', 'clauded-plan.sh');
@@ -191,6 +200,38 @@ function main() {
       assert.deepStrictEqual(out.args, ['--resume', 'abc'], 'fallback runs plain claude with caller args only');
     }
   });
+
+  check('an ECC_PLAN or gateway token inherited from the parent shell never reaches claude', () => {
+    const saved = { ECC_PLAN: process.env.ECC_PLAN, ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN };
+    process.env.ECC_PLAN = 'inherited-plan';
+    process.env.ANTHROPIC_AUTH_TOKEN = 'fake-inherited-token';
+    try {
+      const { run } = setup({ call: 'clauded_plan nosuchplan nsp' });
+      assert.strictEqual(run.status, 0, `exit ${run.status}: ${run.stderr}`);
+      const out = parse(run.stdout);
+      assert.strictEqual(out.plan, '<unset>', 'inherited ECC_PLAN leaked into the fallback session');
+      assert.strictEqual(out.token, '<unset>', 'inherited gateway token leaked into the fallback session');
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  check('a wrapper leaves the caller shell clean: no plan, no token, and the next claude is plain', () => {
+    const afterLines = 'printf "AFTER_PLAN=%s\\nAFTER_TOKEN=%s\\n" "${ECC_PLAN-<unset>}" "${ANTHROPIC_AUTH_TOKEN-<unset>}"';
+    const { run } = setup({ call: `ocgo_clauded >/dev/null; ${afterLines}; claude` });
+    assert.strictEqual(run.status, 0, `exit ${run.status}: ${run.stderr}`);
+    const lines = run.stdout.split('\n');
+    assert.ok(lines.includes('AFTER_PLAN=<unset>'), `ECC_PLAN leaked into the caller: ${run.stdout}`);
+    assert.ok(lines.includes('AFTER_TOKEN=<unset>'), 'gateway token leaked into the caller');
+    const plain = parse(run.stdout);
+    assert.strictEqual(plain.plan, '<unset>', 'a plain claude after a wrapper must record no plan');
+    assert.strictEqual(plain.token, '<unset>', 'a plain claude after a wrapper must not use the gateway');
+  });
+
+  for (const dir of scratchDirs) fs.rmSync(dir, { recursive: true, force: true });
 
   console.log(`\nResults: ${passed} passed, ${failed} failed\n`);
   return failed;
