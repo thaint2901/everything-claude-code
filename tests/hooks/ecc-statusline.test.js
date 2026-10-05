@@ -412,7 +412,9 @@ function runTests() {
     'utf8'
   );
 
-  const render = (model, extra = {}) => {
+  // `plan` is what the `<plan>_clauded` wrapper would export as ECC_PLAN. It
+  // stays explicit on every render (default '') for the reason below.
+  const render = (model, extra = {}, plan = '') => {
     const result = spawnSync('node', [path.join(__dirname, '..', '..', 'scripts', 'hooks', 'ecc-statusline.js')], {
       encoding: 'utf8',
       input: JSON.stringify({
@@ -423,7 +425,12 @@ function runTests() {
         ...extra
       }),
       timeout: 10000,
-      env: { ...process.env, ECC_AGENT_DATA_HOME: renderDir }
+      // ECC_PLAN cleared: the renderer now reads it straight from the
+      // environment to pick which plan's figures to show, and these fixtures
+      // are built around the legacy model->plan fallback firing instead —
+      // a real ECC_PLAN in the dev shell running this suite would otherwise
+      // leak in and pick a different (absent) plan, rendering nothing.
+      env: { ...process.env, ECC_AGENT_DATA_HOME: renderDir, ECC_PLAN: plan }
     });
     return stripAnsi(result.stdout || '');
   };
@@ -434,7 +441,9 @@ function runTests() {
   if (
     test('renders the week/month segment on an API-model session', () => {
       const out = render(API_MODEL);
-      assert.ok(out.includes('w:$0.42 m:$0.42'), `unexpected line: ${JSON.stringify(out)}`);
+      // Labelled with the plan: the fixture row carries no `plan` field, so
+      // this is also the legacy model→plan path firing end to end.
+      assert.ok(out.includes('ocgo w:$0.42 m:$0.42'), `unexpected line: ${JSON.stringify(out)}`);
       // and the rest of the line still arrives around it
       assert.ok(out.includes('DeepSeek V4.1 Flash'), 'model label missing');
       assert.ok(out.includes('example-project'), 'dir segment missing');
@@ -470,6 +479,59 @@ function runTests() {
       // segment is unlabelled — so it stays off rather than showing a figure
       // the reader cannot attribute.
       const out = render(undefined);
+      assert.ok(!out.includes('w:$'), `unexpected line: ${JSON.stringify(out)}`);
+    })
+  )
+    passed++;
+  else failed++;
+
+  // The tests below replace the fixture log, so they sit after every test that
+  // relies on the single 0.42 row and before the no-log test that deletes it.
+  const writeLog = (rows) => {
+    fs.mkdirSync(metricsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(metricsDir, 'costs.jsonl'),
+      rows.map((row) => `${JSON.stringify({ timestamp: new Date().toISOString(), model: 'deepseek-v4.1-flash', ...row })}\n`).join(''),
+      'utf8'
+    );
+    // Drop the rollup cache so a same-size rewrite cannot serve the old rows.
+    fs.rmSync(path.join(metricsDir, 'cost-rollup.json'), { force: true });
+  };
+
+  if (
+    test('ECC_PLAN beats the model->plan fallback when they disagree', () => {
+      // llmgo, llmcc and ocgo sessions all report deepseek-v4.1-flash, which the
+      // legacy table maps to ocgo: only ECC_PLAN can tell them apart. Dropping
+      // it from the planOf() call would label this session ocgo.
+      writeLog([{ session_id: 'api-llmgo', plan: 'llmgo', estimated_cost_usd: 0.31 }]);
+      const out = render(API_MODEL, {}, 'llmgo');
+      assert.ok(out.includes('llmgo w:$0.31 m:$0.31'), `unexpected line: ${JSON.stringify(out)}`);
+      assert.ok(!out.includes('ocgo'), `fell back to the model's legacy plan: ${JSON.stringify(out)}`);
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('shows only the ECC_PLAN group when the log holds spend for several plans', () => {
+      writeLog([
+        { session_id: 'api-llmgo', plan: 'llmgo', estimated_cost_usd: 0.31 },
+        { session_id: 'api-llmcc', plan: 'llmcc', estimated_cost_usd: 1.25 },
+        { session_id: 'api-ocgo', plan: 'ocgo', estimated_cost_usd: 7.5 }
+      ]);
+      const out = render(API_MODEL, {}, 'llmcc');
+      assert.ok(out.includes('llmcc w:$1.25 m:$1.25'), `unexpected line: ${JSON.stringify(out)}`);
+      assert.ok(!out.includes('llmgo') && !out.includes('ocgo'), `other plan leaked in: ${JSON.stringify(out)}`);
+      assert.ok(!out.includes('$0.31') && !out.includes('$7.50'), `other plan's spend leaked in: ${JSON.stringify(out)}`);
+    })
+  )
+    passed++;
+  else failed++;
+
+  if (
+    test('omits the segment when ECC_PLAN names a plan with no spend, rather than borrowing the legacy plan', () => {
+      writeLog([{ session_id: 'api-ocgo', plan: 'ocgo', estimated_cost_usd: 7.5 }]);
+      const out = render(API_MODEL, {}, 'llmgo');
       assert.ok(!out.includes('w:$'), `unexpected line: ${JSON.stringify(out)}`);
     })
   )

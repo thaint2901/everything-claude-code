@@ -35,22 +35,24 @@ In the order `main()` runs them:
 4. **Backs up** `settings.json` and `~/.claude.json` into `~/.claude/backups/`, before anything overwrites them
 5. **Installs MCP server catalog** — the 11 servers in this fork's `MCP_ALLOWLIST` (out of ECC's full 35-server catalog), with env-var placeholders. Servers without required env vars stay disabled; set the env var to auto-enable. See [MCP servers](#mcp-servers) below.
 6. **Installs global CLAUDE.md** — copies `thaint-setup/CLAUDE.base.md` to `~/.claude/CLAUDE.md` (applies across all projects)
-7. **Copies directories** into `~/.claude/` (from this repo's checked-out tree), listing but not deleting files the source no longer has:
+7. **Installs global skills** — copies `thaint-setup/skills/` into `~/.claude/skills/` (applies across all projects). Adds files only: your own skills in that directory (`learned/`, `synced/`, anything you wrote) are never touched or pruned, even with `--prune`. Ships `kb-capture`
+8. **Copies directories** into `~/.claude/` (from this repo's checked-out tree), listing but not deleting files the source no longer has:
    - `agents/`
    - `commands/`
    - `skills/configure-ecc`
    - `skills/strategic-compact`
-8. **Installs hooks-runtime** — runs the ECC `install.sh`, which copies the hook scripts without wiring them to any event
-9. **Wires the hook graph** — merges `hooks/hooks.json` into `.hooks` of `settings.json`, the only place Claude Code reads hooks from; keeps entries the graph does not carry, and skips itself when ECC is installed as a plugin
-10. **Applies this fork's hook-audit env defaults** — sets `env.ECC_DISABLED_HOOKS` and `env.ECC_GATEGUARD` in `settings.json`, only if unset (an existing value is kept, with a warning if it differs); see `thaint-setup/HOOK-CATALOG.md` for the rationale behind each disabled hook. `ECC_GATEGUARD=off` turns GateGuard off outright — unlike a new `disabled-hooks.txt` entry, it does reach an install that already exists, because this script has never written that key so the only-if-unset rule does not block it
-11. **Patches `settings.json`** — points `statusLine` at `~/.claude/scripts/hooks/ecc-statusline.js` (model + effort level, task, 5-hour/7-day rate-limit budget, directory, context bar) and sets `refreshInterval: 20` (seconds) so it updates on a timer, not just on each response — 20s balances a live-feeling rate-limit countdown against how often it re-samples cost/context-window usage, which jitter visibly at 5s during heavy background subagent activity since Claude Code gives the script no way to tell a timer tick from a real turn boundary; keeps one you set by hand:
+9. **Installs hooks-runtime** — runs the ECC `install.sh`, which copies the hook scripts without wiring them to any event
+10. **Wires the hook graph** — merges `hooks/hooks.json` into `.hooks` of `settings.json`, the only place Claude Code reads hooks from; keeps entries the graph does not carry, and skips itself when ECC is installed as a plugin
+11. **Applies this fork's hook-audit env defaults** — sets `env.ECC_DISABLED_HOOKS` and `env.ECC_GATEGUARD` in `settings.json`, only if unset (an existing value is kept, with a warning if it differs); see `thaint-setup/HOOK-CATALOG.md` for the rationale behind each disabled hook. `ECC_GATEGUARD=off` turns GateGuard off outright — unlike a new `disabled-hooks.txt` entry, it does reach an install that already exists, because this script has never written that key so the only-if-unset rule does not block it
+12. **Patches `settings.json`** — points `statusLine` at `~/.claude/scripts/hooks/ecc-statusline.js` (model + effort level, task, 5-hour/7-day rate-limit budget, directory, context bar) and sets `refreshInterval: 20` (seconds) so it updates on a timer, not just on each response — 20s balances a live-feeling rate-limit countdown against how often it re-samples cost/context-window usage, which jitter visibly at 5s during heavy background subagent activity since Claude Code gives the script no way to tell a timer tick from a real turn boundary; keeps one you set by hand:
 
     ```text
     Opus 5 · high │ 5h 24% (1h11m)  7d 41% (3d) │ my-worktree ████░░░░░░ 46%
     ```
 
-12. **Installs Telegram hook** — writes `~/.claude/scripts/hooks/telegram-notify.js` and patches `settings.json`
-13. **Patches shell rc** (`.zshrc` or `.bashrc`) — adds convenience alias and env var:
+13. **Installs Telegram hook** — writes `~/.claude/scripts/hooks/telegram-notify.js` and patches `settings.json`
+14. **Installs the markdown write rule** — writes `~/.claude/scripts/hooks/markdown-write-rule.js` and `audience-aware-writing.md` beside it, and adds a `PreToolUse` entry (`Write|Edit|MultiEdit`) to `settings.json`. The hook injects the rule once per session when a `.md` file is written, so reading markdown costs nothing (as a `paths:` rule it loaded on every markdown read). Removes the old copy at `~/.claude/rules/docs/audience-aware-writing.md` if it is still the shipped one; an edited copy is kept, with a warning
+15. **Patches shell rc** (`.zshrc` or `.bashrc`) — adds convenience alias and env var:
    ```bash
    alias clauded='claude --dangerously-skip-permissions'
    export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
@@ -67,6 +69,34 @@ In the order `main()` runs them:
 
 To install a different ECC version, `git checkout` that ref and re-run — the
 script installs the tree it lives in.
+
+## Coding plans
+
+Each plan is an `<PLAN>_` block in the gitignored `.env` plus one wrapper line
+in `setup_claude.sh`. The installer writes the wrappers to
+`~/.claude/setup/clauded-plan.sh`, sourced from your shell rc: a wrapper sources
+its own prefix block, strips the prefix so `claude` sees plain `ANTHROPIC_*`,
+sets `ECC_PLAN` for statusline/spend attribution, and launches
+`claude --dangerously-skip-permissions --effort max`. Plain `claude` routes to
+none of them.
+
+| Wrapper | `.env` block | Routes to |
+|---|---|---|
+| `ocgo_clauded` | `OPENCODE_GO_` | OpenCode Go, direct (`opencode.ai/zen/go`) — model `deepseek-v4.1-flash[1m]`, opus tier `qwen3.8-flash[1m]` |
+| `ds_clauded` | `DEEPSEEK_` | DeepSeek API, direct (`api.deepseek.com/anthropic`) |
+| `llmgo_clauded` | `LITELLM_OPENCODE_` | LiteLLM proxy → OpenCode Go — model `opencode/deepseek-v4.1-flash[1m]` |
+| `llmcc_clauded` | `LITELLM_COMMANDCODE_` | LiteLLM proxy → Command Code (GOAT) — model `commandcode/deepseek-v4.1-flash[1m]` |
+
+The two `llm*` plans share one gateway (`thaint-setup/.env` → tunnel URL
+`https://model-gateway.tensoredge.cc`, auth = the proxy's `LITELLM_MASTER_KEY`);
+pick between them by whose account the DeepSeek V4.1 Flash traffic should bill.
+Model values there are the proxy's `model_list` ids (`~/projects/litellm/config.yaml`),
+and the `[1m]` suffix is client-side only — Claude Code strips it from the wire
+request and uses it for the 1M context window.
+
+Adding another plan: append a `<PLAN>_` block to `.env` and one wrapper line
+(`<name>_clauded() { clauded_plan <plan> <label> "$@"; }`), then re-run the
+installer.
 
 ## Examples
 

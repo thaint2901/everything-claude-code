@@ -16,7 +16,14 @@ session**, so the report takes the **latest row per `session_id`** and sums
 across sessions (summing every row would multiply-count).
 
 Row schema:
-`{ timestamp, session_id, transcript_path, model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, estimated_cost_usd }`
+`{ timestamp, session_id, transcript_path, plan, model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, estimated_cost_usd }`
+
+`plan` is the short label of the gateway plan the session ran under
+(`ECC_PLAN`, set by the `<plan>_clauded` wrappers — `ocgo`, `ds`). It is empty
+for a plain `claude` session, and for any row written before the field
+existed. Empty is not a substitute for knowing the plan: both of this fork's
+gateway plans serve `deepseek-*` models, so `cost-rollup.js` carries a small
+legacy model→plan table for reading those rows.
 
 ## What this command does
 
