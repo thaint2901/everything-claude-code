@@ -944,24 +944,10 @@ install_global_claude_md() {
   log "installed global CLAUDE.md at $dest"
 }
 
-# ── Global rules ────────────────────────────────────────────────────────────
-# Copies thaint-setup/rules/ into ~/.claude/rules/ (rules for every project).
-# ~/.claude/rules is a shared namespace — your own rules live there too — so this
-# only adds files; it deliberately skips copy_dir's report_foreign/--prune.
-install_global_rules() {
-  local src="${SCRIPT_DIR}/rules" dest="${CLAUDE_HOME}/rules"
-
-  [[ -d "$src" ]] || { warn "rules not found at $src — skipped"; return; }
-
-  run mkdir -p "$dest"
-  run cp -rf "$src/." "$dest/"
-  (( DRY_RUN )) || log "installed global rules at $dest"
-}
-
 # ── Global skills ───────────────────────────────────────────────────────────
 # Copies thaint-setup/skills/ into ~/.claude/skills/ (skills for every project).
-# Same add-only reasoning as install_global_rules: ~/.claude/skills also holds
-# your own skills (learned/, synced/), so no report_foreign/--prune.
+# Add-only: ~/.claude/skills also holds your own skills (learned/, synced/), so
+# no report_foreign/--prune.
 install_global_skills() {
   local src="${SCRIPT_DIR}/skills" dest="${CLAUDE_HOME}/skills"
 
@@ -970,6 +956,76 @@ install_global_skills() {
   run mkdir -p "$dest"
   run cp -rf "$src/." "$dest/"
   (( DRY_RUN )) || log "installed global skills at $dest"
+}
+
+# ── Markdown write rule ─────────────────────────────────────────────────────
+# audience-aware-writing.md as a `paths: **/*.md` rule loads whenever Claude
+# *reads* a markdown file. This hook injects it on Write/Edit/MultiEdit of a .md
+# file instead, once per session, so reading costs nothing. The rule sits next
+# to the hook (it keeps its frontmatter; the hook drops it when injecting).
+patch_settings_markdown_write_rule() {
+  local settings="$1" hook_js="$2"
+
+  if (( DRY_RUN )); then
+    printf '[dry-run] patch %s (PreToolUse entry for markdown-write-rule.js)\n' "$settings"
+    return
+  fi
+
+  [[ -f "$settings" ]] || printf '{}\n' > "$settings"
+
+  local tmp
+  tmp="$(mktemp)"
+  jq \
+    --arg cmd "node $hook_js" \
+    --arg marker "markdown-write-rule.js" \
+    '
+    .hooks //= {} |
+    .hooks.PreToolUse //= [] |
+    .hooks.PreToolUse = (
+      [.hooks.PreToolUse[] | select(.hooks[0].command // "" | contains($marker) | not)]
+      + [{ matcher: "Write|Edit|MultiEdit", hooks: [ { type: "command", command: $cmd, timeout: 5 } ] }]
+    )
+    ' "$settings" > "$tmp" \
+    || die "jq failed to patch $settings"
+  mv "$tmp" "$settings"
+  log "patched settings.json (markdown-write-rule entry in PreToolUse)"
+}
+
+install_markdown_write_rule() {
+  log "markdown-write-rule"
+  require_cmd node
+
+  local hook_dir="${CLAUDE_HOME}/scripts/hooks"
+  local hook_js="${hook_dir}/markdown-write-rule.js"
+  local settings="${CLAUDE_HOME}/settings.json"
+  # Where an earlier setup installed the rule as a path-scoped global rule.
+  local stale="${CLAUDE_HOME}/rules/docs/audience-aware-writing.md"
+
+  if (( DRY_RUN )); then
+    printf '[dry-run] mkdir -p %s\n' "$hook_dir"
+    printf '[dry-run] write %s (chmod 700) and %s/audience-aware-writing.md\n' "$hook_js" "$hook_dir"
+  else
+    run mkdir -p "$hook_dir"
+    cp "${SCRIPT_DIR}/markdown-write-rule.js" "$hook_js"
+    chmod 700 "$hook_js"
+    cp "${SCRIPT_DIR}/audience-aware-writing.md" "${hook_dir}/audience-aware-writing.md"
+  fi
+
+  patch_settings_markdown_write_rule "$settings" "$hook_js"
+
+  # Left behind, it would keep loading on every markdown read. Only the exact
+  # copy this setup shipped is removed; an edited one is yours.
+  if [[ -f "$stale" ]]; then
+    if (( DRY_RUN )); then
+      printf '[dry-run] rm %s (old path-scoped copy)\n' "$stale"
+    elif cmp -s "$stale" "${SCRIPT_DIR}/audience-aware-writing.md"; then
+      rm -f "$stale"
+      rmdir "$(dirname "$stale")" 2>/dev/null || true
+      log "removed the old path-scoped rule at $stale"
+    else
+      warn "$stale differs from the shipped rule — left in place; it still loads on every markdown read"
+    fi
+  fi
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -993,7 +1049,6 @@ main() {
   patch_mcp_catalog
   load_env
   install_global_claude_md
-  install_global_rules
   install_global_skills
   install_all_dirs
   install_hooks_runtime
@@ -1002,6 +1057,7 @@ main() {
   ensure_ecc_hook_config
   patch_settings_statusline
   install_telegram_hook
+  install_markdown_write_rule
   ensure_apply_env "${CLAUDE_HOME}/settings.json"
   ensure_shell_helpers
   patch_shell_rc
