@@ -38,7 +38,7 @@ const WRAPPERS = {
 };
 
 // Gateway path launches claude with these before the caller's own args.
-const GATEWAY_FLAGS = ['--dangerously-skip-permissions', '--effort', 'max'];
+const GATEWAY_FLAGS = ['--permission-mode', 'plan', '--allow-dangerously-skip-permissions', '--effort', 'max'];
 
 // Every scratch dir setup() makes; main() removes them so repeated runs leave no litter.
 const scratchDirs = [];
