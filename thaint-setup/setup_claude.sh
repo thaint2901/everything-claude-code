@@ -93,7 +93,7 @@ Allowlisted env from thaint-setup/.env (see .env.example) written to the
   (routing/model vars) live in the same .env under a <PLAN>_ prefix, read
   (prefix stripped) only by the installed <plan>_clauded helpers.
 Shell rc patch (.zshrc or .bashrc):
-  alias clauded='CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-5-5 claude --model claude-sonnet-5-5 --permission-mode plan --allow-dangerously-skip-permissions'
+  alias clauded='CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-5-5 claude --model claude-sonnet-5-5 --effort high --permission-mode plan --allow-dangerously-skip-permissions'
   source ~/.claude/setup/clauded-plan.sh  (defines clauded_plan +
     <plan>_clauded wrappers, e.g. ocgo_clauded)
   export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
@@ -845,7 +845,7 @@ EOF
 # Patches the user's login shell rc with convenience alias + env.
 # Priority: $SHELL (login shell) → existing file → skip.
 patch_shell_rc() {
-  local alias_line="alias clauded='CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-5-5 claude --model claude-sonnet-5-5 --permission-mode plan --allow-dangerously-skip-permissions'"
+  local alias_line="alias clauded='CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-5-5 claude --model claude-sonnet-5-5 --effort high --permission-mode plan --allow-dangerously-skip-permissions'"
   local env_line="export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1"
   local helper="${SHELL_HELPERS_DIR}/clauded-plan.sh"
   local helper_source="[[ -f \"${helper}\" ]] && source \"${helper}\""

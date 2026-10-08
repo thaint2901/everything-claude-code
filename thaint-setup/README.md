@@ -54,7 +54,7 @@ In the order `main()` runs them:
 14. **Installs the markdown write rule** — writes `~/.claude/scripts/hooks/markdown-write-rule.js` and `audience-aware-writing.md` beside it, and adds a `PreToolUse` entry (`Write|Edit|MultiEdit`) to `settings.json`. The hook injects the rule once per session when a `.md` file is written, so reading markdown costs nothing (as a `paths:` rule it loaded on every markdown read). Removes the old copy at `~/.claude/rules/docs/audience-aware-writing.md` if it is still the shipped one; an edited copy is kept, with a warning
 15. **Patches shell rc** (`.zshrc` or `.bashrc`) — adds convenience alias and env var:
    ```bash
-   alias clauded='CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-5-5 claude --model claude-sonnet-5-5 --permission-mode plan --allow-dangerously-skip-permissions'
+   alias clauded='CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-5-5 claude --model claude-sonnet-5-5 --effort high --permission-mode plan --allow-dangerously-skip-permissions'
    export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
    ```
 
