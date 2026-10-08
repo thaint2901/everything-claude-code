@@ -117,6 +117,12 @@ A formatter rewrites files on edit: check `git diff --stat` before `git add`.
 - Review agents can write to the working tree even when asked only to read — check `git status` after running them, before committing.
 - `gh pr create` targets the upstream parent unless `gh repo set-default` points at the fork — and `--base` names the branch, not the repo, so pass `--repo` too.
 - In a `cat > file <<EOF` heredoc inside `ensure_shell_helpers` (setup_claude.sh), escape runtime vars as `\${var}`; an unescaped `${var}` aborts the install under `set -u` with "unbound variable".
+- `setup_claude.sh --dry-run` prints `.env` secrets (EXA, Firecrawl, Telegram token) in plain text — write its output to a file and mask it before showing anyone.
+- The shell-rc patch appends `alias clauded=` only when that exact line is missing, so changing the alias leaves the old line behind. Remove stale `alias clauded=` lines by hand, after backing up `~/.zshrc`.
+- `setup_claude.sh` needs `claude`, `node` and `npm` on PATH. A non-interactive `ssh host 'cmd'` does not load `.zshrc` (nvm and `~/.local/bin` are missing); run it as `zsh -ic 'bash ./setup_claude.sh'` instead.
+- `dropping hook entry the graph supersedes` on a re-run is expected when `hooks.json` changed. Non-ECC hooks, such as the Orca ones, are kept.
+- To confirm a flag combo starts the way you expect: `claude -p --output-format stream-json --verbose "ok"` and read `permissionMode` and `model` from the `init` message.
+- `tests/scripts/clauded-plan.test.js` pins `GATEWAY_FLAGS`; when the `exec claude` flags in `clauded_plan` change, update that list in the same commit.
 - Running `setup_claude.sh` (full) regenerates `yarn.lock` (the hooks-runtime install runs a fake npm install) — restore with `git checkout -- yarn.lock` after, or use `--dry-run` when only inspecting.
 - `thaint-setup/.env` (gitignored) is the single source for shared keys (→ settings.json env) plus `<PLAN>_` gateway blocks (→ `clauded_plan`, which strips the prefix). After a worktree holding it is deleted, real values must be re-derived from `~/.claude/settings.json` env.
 - The env-single-file design: adding a plan = a `<PLAN>_` prefix block in `.env` + one `<plan>_clauded` wrapper line. Gateway vars never reach settings.json (only `ENV_APPLY_KEYS` do); plain `claude` stays on the user's Anthropic subscription.
