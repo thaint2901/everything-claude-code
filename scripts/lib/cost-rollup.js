@@ -23,7 +23,9 @@
  *    ~20x the real rate for a non-Anthropic gateway model — so a row is
  *    counted only when its model is one this fork actually routes through the
  *    API. Anthropic rows are excluded as well: they are the subscription's
- *    notional figure, not spend.
+ *    notional figure, not spend. A row whose tracker recorded the gateway
+ *    split says so in `api_cost_usd`, and that figure beats the model reading
+ *    — see the loop in computeRollup.
  *
  * The rollup is cached beside the log. The statusline renders every 20s and
  * re-parsing a log that grows without bound on every render is waste.
@@ -37,11 +39,13 @@ const { getClaudeDir, ensureDir } = require('./utils');
 const METRICS_DIRNAME = 'metrics';
 const LOG_FILENAME = 'costs.jsonl';
 const CACHE_FILENAME = 'cost-rollup.json';
-// Bumped whenever the cached shape changes. The reuse check below also keys on
-// the source log's size and mtime, which say nothing about the shape a
-// *previous version* of this file wrote — so without this, a cache left by an
-// older build is served as current and reads as zero spend.
-const CACHE_SCHEMA = 2;
+// Bumped whenever the cached shape or its figures change. The reuse check
+// below also keys on the source log's size and mtime, which say nothing about
+// what a *previous version* of this file computed — so without this, a cache
+// left by an older build is served as current and reads as zero spend. Bumped
+// to 3 for the per-row gateway split: the same log now yields different plan
+// totals, and the log itself does not move to signal that.
+const CACHE_SCHEMA = 3;
 const API_COLOR = '\x1b[38;5;117m';
 const RESET = '\x1b[0m';
 
@@ -175,8 +179,15 @@ function computeRollup(rows, nowMs) {
   const plans = {};
 
   for (const row of latest.values()) {
-    if (!isApiPricedModel(row.model)) continue;
-    const cost = Number(row.estimated_cost_usd);
+    // A row from a tracker that records the split carries its own gateway
+    // figure, and that figure — not the model — decides. `model` is the
+    // transcript's *last* model, so on a session that switched launcher
+    // mid-life it names the wrong end of the session: it would admit a total
+    // that is mostly subscription spend. Rows predating the field fall back
+    // to the model gate.
+    const split = typeof row.api_cost_usd === 'number' && Number.isFinite(row.api_cost_usd) ? row.api_cost_usd : null;
+    if (split === null && !isApiPricedModel(row.model)) continue;
+    const cost = split === null ? Number(row.estimated_cost_usd) : split;
     if (!Number.isFinite(cost) || cost <= 0) continue;
     const at = new Date(row.timestamp);
     if (Number.isNaN(at.getTime())) continue;
