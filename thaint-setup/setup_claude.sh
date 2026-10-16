@@ -675,7 +675,7 @@ patch_settings_statusline() {
 # browser automation, web search/scraping, design tooling, and issue/doc
 # trackers. Everything else in mcp-servers.json (cloud infra, extra memory
 # servers, code-quality tools, etc.) is skipped rather than installed disabled.
-readonly MCP_ALLOWLIST='["context7","playwright","browser-use","browserbase","exa-web-search","parallel-search","firecrawl","magic","laraplugins","jira","confluence"]'
+readonly MCP_ALLOWLIST='["context7","playwright","browser-use","browserbase","exa-web-search","parallel-search","firecrawl","magic","laraplugins","jira","confluence","deepwiki"]'
 
 # ── MCP catalog patch ───────────────────────────────────────────────────────
 # Reads ECC's mcp-servers.json catalog, filters it down to MCP_ALLOWLIST, and
