@@ -62,6 +62,8 @@ function runPatch(opts = {}) {
   const body = fs.readFileSync(SCRIPT, 'utf8');
   const fn = body.match(/^patch_mcp_catalog\(\) \{[\s\S]*?^\}/m);
   assert.ok(fn, 'could not extract patch_mcp_catalog from the script');
+  const allowlist = body.match(/^readonly MCP_ALLOWLIST=.*$/m);
+  assert.ok(allowlist, 'could not extract MCP_ALLOWLIST from the script');
 
   const harness = path.join(dir, 'run.sh');
   fs.writeFileSync(
@@ -75,6 +77,7 @@ HOME="${home}"
 log()  { printf '[log] %s\\n' "$*"; }
 warn() { printf '[warn] %s\\n' "$*" >&2; }
 die()  { printf '[die] %s\\n' "$*" >&2; exit 1; }
+${allowlist[0]}
 ${fn[0]}
 patch_mcp_catalog
 `
