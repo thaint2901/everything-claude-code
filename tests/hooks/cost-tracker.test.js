@@ -507,6 +507,44 @@ function runTests() {
     ? passed++
     : failed++;
 
+  // 13. Records the gateway-priced portion of the session beside the total.
+  // A row is a session-cumulative snapshot, so a session that switches
+  // launcher mid-life has a total that is mostly *not* gateway spend while its
+  // single `model` field says the opposite. No reader can recover the split
+  // from the total, so the tracker has to record it.
+  test('records the gateway-priced subtotal beside the session total', () => {
+    const tmpHome = makeTempDir();
+    const transcriptPath = path.join(tmpHome, 'session.jsonl');
+    writeTranscript(transcriptPath, [
+      {
+        // Subscription turn: 1M input at Sonnet's $3/1M.
+        type: 'assistant',
+        timestamp: '2026-01-07T12:00:00.000Z',
+        message: { id: 'msg_sonnet', model: 'claude-sonnet-5-5', usage: { input_tokens: 1000000, output_tokens: 0 } }
+      },
+      {
+        // Gateway turn, last in the transcript — so it also becomes the row's
+        // `model`, which is exactly what makes the total look gateway-billed.
+        type: 'assistant',
+        timestamp: '2026-01-07T12:00:00.000Z', // Wed, off-peak
+        message: { id: 'msg_deepseek', model: 'deepseek-flash', usage: { input_tokens: 1000000, output_tokens: 0 } }
+      }
+    ]);
+
+    const result = runScript({ session_id: 'mixed-session', transcript_path: transcriptPath }, withTempHome(tmpHome));
+    assert.strictEqual(result.code, 0, `Expected exit code 0, got ${result.code}`);
+
+    const metricsFile = path.join(tmpHome, '.claude', 'metrics', 'costs.jsonl');
+    const row = JSON.parse(fs.readFileSync(metricsFile, 'utf8').trim());
+    assert.strictEqual(row.model, 'deepseek-flash', 'Expected the last turn to be recorded as the row model');
+    assert.strictEqual(row.estimated_cost_usd, 3.15, 'Expected the total to keep both turns');
+    assert.strictEqual(row.api_cost_usd, 0.15, 'Expected only the gateway turn in the subtotal');
+
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  })
+    ? passed++
+    : failed++;
+
   console.log(`\nResults: Passed: ${passed}, Failed: ${failed}`);
   process.exit(failed > 0 ? 1 : 0);
 }

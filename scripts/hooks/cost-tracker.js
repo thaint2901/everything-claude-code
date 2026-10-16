@@ -42,6 +42,10 @@ const os = require('os');
 const path = require('path');
 const { ensureDir, appendFile, getClaudeDir } = require('../lib/utils');
 const { sanitizeSessionId } = require('../lib/session-bridge');
+// Shared with the rollup rather than mirrored, so the two cannot drift: this
+// hook decides which turns go into api_cost_usd with it, and the rollup
+// decides which rows to read with the same answer.
+const { isApiPricedModel } = require('../lib/cost-rollup');
 
 const HARNESS_COST_MAX_AGE_SECONDS = 300;
 
@@ -112,7 +116,7 @@ function getRates(model, timestamp) {
   const m = String(model || '').toLowerCase();
   if (m.includes('haiku')) return RATE_TABLE.haiku;
   if (m.includes('opus')) return RATE_TABLE.opus;
-  if (m.includes('deepseek')) {
+  if (isApiPricedModel(m)) {
     const date = timestamp ? new Date(timestamp) : new Date();
     return isDeepSeekPeakHour(date) ? RATE_TABLE.deepseek.peak : RATE_TABLE.deepseek.offPeak;
   }
@@ -132,8 +136,10 @@ function toNumber(v) {
 /**
  * Scan the session JSONL and sum token usage — and cost — across all
  * assistant turns. Returns
- * { inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, model, costUsd }
- * or null on read failure.
+ * { inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, model,
+ *   costUsd, apiCostUsd }
+ * or null on read failure. `apiCostUsd` is the gateway-priced slice of
+ * `costUsd`; the row write below says why the split is kept.
  *
  * Claude Code writes one JSONL line per content block, so a single API
  * response (one message.id) spans multiple assistant lines that each repeat
@@ -189,12 +195,14 @@ function sumUsageFromTranscript(transcriptPath) {
   let cacheWriteTokens = 0;
   let cacheReadTokens = 0;
   let costUsd = 0;
+  let apiCostUsd = 0;
 
   for (const { usage: u, timestamp, model: msgModel } of usageById.values()) {
     // `msgModel` can be the literal 'unknown' — the value the scan above
     // treats as "no model info" — which is truthy and would otherwise
     // defeat this fallback.
-    const rates = getRates(msgModel && msgModel !== 'unknown' ? msgModel : model, timestamp);
+    const effectiveModel = msgModel && msgModel !== 'unknown' ? msgModel : model;
+    const rates = getRates(effectiveModel, timestamp);
     const inTok = toNumber(u.input_tokens);
     const outTok = toNumber(u.output_tokens);
     const writeTok = toNumber(u.cache_creation_input_tokens);
@@ -205,10 +213,12 @@ function sumUsageFromTranscript(transcriptPath) {
     cacheWriteTokens += writeTok;
     cacheReadTokens += readTok;
 
-    costUsd += (inTok / 1e6) * rates.in + (outTok / 1e6) * rates.out + (writeTok / 1e6) * rates.cacheWrite + (readTok / 1e6) * rates.cacheRead;
+    const turnCostUsd = (inTok / 1e6) * rates.in + (outTok / 1e6) * rates.out + (writeTok / 1e6) * rates.cacheWrite + (readTok / 1e6) * rates.cacheRead;
+    costUsd += turnCostUsd;
+    if (isApiPricedModel(effectiveModel)) apiCostUsd += turnCostUsd;
   }
 
-  return { inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, model, costUsd };
+  return { inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, model, costUsd, apiCostUsd };
 }
 
 // 1MB, matching the other Stop hooks. The Stop payload carries
@@ -247,9 +257,10 @@ process.stdin.on('end', () => {
       usageTotals = sumUsageFromTranscript(transcriptPath);
     }
 
-    const { inputTokens = 0, outputTokens = 0, cacheWriteTokens = 0, cacheReadTokens = 0, model = 'unknown', costUsd = 0 } = usageTotals || {};
+    const { inputTokens = 0, outputTokens = 0, cacheWriteTokens = 0, cacheReadTokens = 0, model = 'unknown', costUsd = 0, apiCostUsd = 0 } = usageTotals || {};
 
     const transcriptCostUsd = Math.round(costUsd * 1e6) / 1e6;
+    const apiCostUsdRounded = Math.round(apiCostUsd * 1e6) / 1e6;
 
     // Prefer the harness's authoritative `cost.total_cost_usd` when the
     // statusline has written it to the per-session cache (see contract in
@@ -287,7 +298,16 @@ process.stdin.on('end', () => {
       output_tokens: outputTokens,
       cache_write_tokens: cacheWriteTokens,
       cache_read_tokens: cacheReadTokens,
-      estimated_cost_usd: estimatedCostUsd
+      estimated_cost_usd: estimatedCostUsd,
+      // The gateway-priced slice of this session, and the only figure a reader
+      // can attribute to a gateway plan. Kept separately because `model` and
+      // `plan` above are both read at the final Stop: on a session that
+      // switched launcher mid-life they describe one end of it while the total
+      // covers both (measured: a row of $18.74 that was $0.32 gateway and
+      // $18.42 subscription, filed under the gateway plan in full). Always
+      // priced from the transcript, never from the harness cache — that value
+      // is per-process and prices gateway turns at Anthropic rates.
+      api_cost_usd: apiCostUsdRounded
     };
 
     appendFile(path.join(metricsDir, 'costs.jsonl'), `${JSON.stringify(row)}\n`);

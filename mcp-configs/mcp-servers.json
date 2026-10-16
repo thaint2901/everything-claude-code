@@ -176,6 +176,11 @@
       },
       "description": "AI browser agent for web tasks"
     },
+    "deepwiki": {
+      "type": "http",
+      "url": "https://mcp.deepwiki.com/mcp",
+      "description": "DeepWiki — AI-generated documentation and Q&A for public GitHub repositories (read_wiki_structure, read_wiki_contents, ask_wiki_question). Key-free."
+    },
     "devfleet": {
       "type": "http",
       "url": "http://localhost:18801/mcp",

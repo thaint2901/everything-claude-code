@@ -93,7 +93,7 @@ Allowlisted env from thaint-setup/.env (see .env.example) written to the
   (routing/model vars) live in the same .env under a <PLAN>_ prefix, read
   (prefix stripped) only by the installed <plan>_clauded helpers.
 Shell rc patch (.zshrc or .bashrc):
-  alias clauded='claude --dangerously-skip-permissions'
+  alias clauded='CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-5-5 claude --model claude-sonnet-5-5 --effort high --dangerously-skip-permissions'
   source ~/.claude/setup/clauded-plan.sh  (defines clauded_plan +
     <plan>_clauded wrappers, e.g. ocgo_clauded)
   export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
@@ -675,7 +675,7 @@ patch_settings_statusline() {
 # browser automation, web search/scraping, design tooling, and issue/doc
 # trackers. Everything else in mcp-servers.json (cloud infra, extra memory
 # servers, code-quality tools, etc.) is skipped rather than installed disabled.
-readonly MCP_ALLOWLIST='["context7","playwright","browser-use","browserbase","exa-web-search","parallel-search","firecrawl","magic","laraplugins","jira","confluence"]'
+readonly MCP_ALLOWLIST='["context7","playwright","browser-use","browserbase","exa-web-search","parallel-search","firecrawl","magic","laraplugins","jira","confluence","deepwiki"]'
 
 # ── MCP catalog patch ───────────────────────────────────────────────────────
 # Reads ECC's mcp-servers.json catalog, filters it down to MCP_ALLOWLIST, and
@@ -845,7 +845,7 @@ EOF
 # Patches the user's login shell rc with convenience alias + env.
 # Priority: $SHELL (login shell) → existing file → skip.
 patch_shell_rc() {
-  local alias_line="alias clauded='claude --dangerously-skip-permissions'"
+  local alias_line="alias clauded='CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-5-5 claude --model claude-sonnet-5-5 --effort high --dangerously-skip-permissions'"
   local env_line="export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1"
   local helper="${SHELL_HELPERS_DIR}/clauded-plan.sh"
   local helper_source="[[ -f \"${helper}\" ]] && source \"${helper}\""

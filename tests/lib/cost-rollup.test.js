@@ -173,6 +173,33 @@ function runTests() {
     assert.deepStrictEqual(rollup.plans, {});
   });
 
+  check('buckets a mixed session by its gateway subtotal, not its session total', () => {
+    // A session that ran on the subscription and then switched to a gateway:
+    // one row, whose total is mostly Anthropic. Its `model` is the gateway
+    // one — the last turn wins — so the model gate alone admits all $18.74.
+    // Only api_cost_usd says how much of it the gateway actually billed.
+    const mixed = row('s1', OCGO, 18.74, localIso(2026, 8, 14, 9), 'ocgo');
+    mixed.api_cost_usd = 0.32;
+    assert.strictEqual(week(computeRollup([mixed], NOW_MS), 'ocgo'), 0.32);
+  });
+
+  check('counts a session that ended on the subscription by its gateway turns', () => {
+    // The mirror case: gateway first, then a switch back to Anthropic, so the
+    // row's single `model` reads as Anthropic while real gateway spend sits
+    // inside the total. Keeping the model gate alongside the field drops it.
+    const mixed = row('s1', 'claude-sonnet-5-5', 4.2, localIso(2026, 8, 14, 9), 'ocgo');
+    mixed.api_cost_usd = 0.9;
+    assert.strictEqual(week(computeRollup([mixed], NOW_MS), 'ocgo'), 0.9);
+  });
+
+  check('a zero subtotal contributes nothing, rather than falling back to the total', () => {
+    // Guards the `row.api_cost_usd || row.estimated_cost_usd` shape: a 0 is
+    // falsy, and falling through on it resurrects the whole $18.74.
+    const none = row('s1', OCGO, 18.74, localIso(2026, 8, 14, 9), 'ocgo');
+    none.api_cost_usd = 0;
+    assert.deepStrictEqual(computeRollup([none], NOW_MS).plans, {});
+  });
+
   check('splits a previous week out of the week total but keeps it in the month', () => {
     const rollup = computeRollup([row('s1', OCGO, 0.4, localIso(2026, 8, 8, 12)), row('s2', OCGO, 0.2, localIso(2026, 8, 15, 12))], NOW_MS);
     assert.strictEqual(week(rollup, 'ocgo'), 0.2);
@@ -275,7 +302,7 @@ function runTests() {
       const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
       assert.strictEqual(week(cached, 'ocgo'), 0.2);
       assert.strictEqual(cached.src_size, fs.statSync(logFile).size);
-      assert.strictEqual(cached.schema, 2);
+      assert.strictEqual(cached.schema, 3);
     });
 
     check('serves the cache when the log is untouched', () => {
